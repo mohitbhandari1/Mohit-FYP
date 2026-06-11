@@ -1,0 +1,84 @@
+services:
+  # ─── PostgreSQL Database ───
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: smart_connects
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── Backend API (Express + Node) ───
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - '4000:4000'
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: smart_connects
+      JWT_SECRET: smart-connects-docker-secret-key-2026
+      PORT: 4000
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      FROM_EMAIL: ${FROM_EMAIL:-notifications@smartconnects.com}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend/src:/app/src
+      - /app/node_modules
+
+  # ─── Seed data (runs one-time, then exits) ───
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: smart_connects
+      JWT_SECRET: smart-connects-docker-secret-key-2026
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      FROM_EMAIL: ${FROM_EMAIL:-notifications@smartconnects.com}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ['npm', 'run', 'seed']
+    profiles:
+      - seed
+
+  # ─── Frontend (Next.js) ───
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:4000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/app:/app/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:

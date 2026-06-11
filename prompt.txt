@@ -1,0 +1,96 @@
+The Smart Connects platform provides two types of users: general users and community organizers. General users can browse communities, join groups, and RSVP to events. Users who wish to create their own community or represent an organization can apply through the "Start a New Group" feature.
+
+When applying, the applicant is required to provide details such as the organization or community name, address, contact information, target audience, age group, category of the community, official documents, and other supporting information. Once the application is submitted, it is forwarded to the system administrator for review and verification.
+
+The administrator examines the submitted information and verifies the legitimacy of the organization or individual. If the application satisfies all requirements and the provided documents are valid, the administrator approves the application. Upon approval, the system generates access credentials using the username provided during registration and issues a temporary password.
+
+After receiving approval, the community organizer can log in to the platform, change the password, manage their community profile, and create events. The organizer can also update community information, publish announcements, and interact with community members through the platform.
+
+Main System Roles
+
+User
+
+Register and log in.
+Browse and join communities.
+RSVP to events.
+View community and event information.
+Receive community recommendations.
+
+Community Organizer
+
+Apply to create a community.
+Manage community profile.
+Create and manage events.
+Update community information.
+Interact with members.
+
+System Administrator
+
+Review community applications.
+Verify documents and information.
+Approve or reject applications.
+Manage users, communities, and events.
+Monitor platform activities.
+
+---
+
+Community Creation Application Form
+1. Organization / Community Information
+Organization / Community Name *
+Type of Organization / Community *
+NGO
+INGO
+Club
+Local Community
+Other
+Brief Description of Your Organization / Community *
+Year Established
+Official Website (if available)
+Social Media Links (if available)
+2. Contact Information
+Contact Person Full Name *
+Position / Role in the Organization *
+Email Address *
+Phone Number *
+Office / Organization Address *
+3. Community Details
+Who is your target audience? *
+Age Group *
+Children
+Teenagers
+Young Adults
+Adults
+Senior Citizens
+All Ages
+Community Category *
+Education
+Technology
+Social Service
+Business & Entrepreneurship
+Sports & Fitness
+Arts & Culture
+Environment
+Other
+What activities does your community organize? *
+4. Verification Information
+Upload Registration Certificate or Official Document *
+Upload Organization Logo (Optional)
+Provide Any Additional Verification Documents
+Do you agree that all information provided is accurate and may be verified by the Smart Connects administration? *
+Yes
+No
+5. Account Setup
+Preferred Username *
+Why would you like to join Smart Connects as a Community Organizer? *
+6. Declaration
+I confirm that I am authorized to represent this organization/community and agree to follow the Smart Connects platform guidelines. *
+Yes
+No
+Application Workflow
+User clicks "Start a New Group".
+User completes and submits the application form.
+Application is sent to the System Administrator.
+Administrator reviews the organization details and uploaded documents.
+If approved, the system creates the community account and activates the community page.
+The organizer receives login credentials and can update the password after first login.
+The organizer can then create events, manage members, and publish community updates.

@@ -1,0 +1,102 @@
+# ============================================================================
+# Smart Connects — Local Development with Docker
+# ============================================================================
+# Start everything:   docker compose -f docker-compose.local.yml up -d
+# Seed sample data:   docker compose -f docker-compose.local.yml run seed
+# View logs:          docker compose -f docker-compose.local.yml logs -f
+# Stop:               docker compose -f docker-compose.local.yml down
+# Wipe DB + restart:  docker compose -f docker-compose.local.yml down -v
+#                      && docker compose -f docker-compose.local.yml up -d
+# ============================================================================
+
+services:
+  # ─── 1. PostgreSQL Database ───
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    container_name: smartconnects-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: smart_connects
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Auto-creates tables on first start
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── 2. Backend API (Node.js + Express) ───
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    container_name: smartconnects-backend
+    ports:
+      - "4000:4000"
+    environment:
+      # ── Local secrets / config ──
+      PORT: 4000
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: smart_connects
+      JWT_SECRET: smart-connects-local-jwt-secret-2026
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Mount source code for hot-reload in dev
+      - ./backend/src:/app/src
+      # Prevent host node_modules from overriding container's
+      - /app/node_modules
+
+  # ─── 3. Seed Data (run once — populates sample users & events) ───
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smartconnects-seed
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: smart_connects
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["npm", "run", "seed"]
+    profiles:
+      - seed
+
+  # ─── 4. Frontend (Next.js 14) ───
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    container_name: smartconnects-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # Must be localhost:4000 — the browser makes API calls from your machine
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:4000
+    depends_on:
+      - backend
+    volumes:
+      # Mount source code for hot-reload in dev
+      - ./frontend/app:/app/app
+      # Prevent host node_modules from overriding container's
+      - /app/node_modules
+
+# ─── Persistent Volume ───
+volumes:
+  postgres_data:
