@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Navbar from '../components/Navbar';
+import AdminNavbar from '../components/AdminNavbar';
 import { apiFetch } from '../lib/auth';
 
 type Tab = 'overview' | 'applications' | 'communities' | 'events' | 'users' | 'activity';
 
 export default function AdminDashboard() {
-  const [users, setUsers] = useState<any[]>([]);
+  const [organizers, setOrganizers] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [applications, setApplications] = useState<any[]>([]);
   const [selectedApp, setSelectedApp] = useState<any>(null);
@@ -40,8 +41,9 @@ export default function AdminDashboard() {
       try {
         const adminHeaders = { 'x-admin': 'true' };
 
-        const [usersRes, statsRes, appsRes, communitiesRes, eventsRes, activityRes, activityStatsRes] = await Promise.all([
-          apiFetch('/api/admin/users', { headers: adminHeaders }),
+        const [organizersRes, membersRes, statsRes, appsRes, communitiesRes, eventsRes, activityRes, activityStatsRes] = await Promise.all([
+          apiFetch('/api/admin/users?role=organizer', { headers: adminHeaders }),
+          apiFetch('/api/admin/users?role=member', { headers: adminHeaders }),
           apiFetch('/api/admin/stats', { headers: adminHeaders }),
           apiFetch('/api/admin/applications', { headers: adminHeaders }),
           apiFetch('/api/admin/communities', { headers: adminHeaders }),
@@ -50,12 +52,13 @@ export default function AdminDashboard() {
           apiFetch('/api/admin/activity/stats', { headers: adminHeaders }),
         ]);
 
-        if (!usersRes.ok || !statsRes.ok) {
+        if (!organizersRes.ok || !membersRes.ok || !statsRes.ok) {
           router.push('/');
           return;
         }
 
-        setUsers(await usersRes.json());
+        setOrganizers(await organizersRes.json());
+        setMembers(await membersRes.json());
         setStats(await statsRes.json());
         setApplications(await appsRes.json());
         setAllCommunities(await communitiesRes.json());
@@ -73,7 +76,7 @@ export default function AdminDashboard() {
   }, [router]);
 
   // ===== User Management =====
-  const handleDeleteUser = async (userId: number) => {
+  const handleDeleteUser = async (userId: number, role: string) => {
     if (!confirm('Are you sure you want to delete this user?')) return;
     try {
       const res = await apiFetch(`/api/admin/users/${userId}`, {
@@ -81,7 +84,11 @@ export default function AdminDashboard() {
         headers: { 'x-admin': 'true' },
       });
       if (!res.ok) { setError('Failed to delete user'); return; }
-      setUsers(users.filter((u) => u.id !== userId));
+      if (role === 'organizer') {
+        setOrganizers(organizers.filter((u) => u.id !== userId));
+      } else {
+        setMembers(members.filter((u) => u.id !== userId));
+      }
     } catch (err) { setError('An error occurred'); }
   };
 
@@ -185,7 +192,7 @@ export default function AdminDashboard() {
 
   return (
     <main className="min-h-screen">
-      <Navbar />
+      <AdminNavbar />
       <section className="mx-auto max-w-7xl px-6 py-16 sm:px-8">
         <div className="animate-fade-in-up">
         <h1 className="text-4xl font-bold text-slate-800 dark:text-white">Admin Dashboard</h1>
@@ -535,35 +542,81 @@ export default function AdminDashboard() {
 
         {/* ===== USERS TAB ===== */}
         {activeTab === 'users' && (
-          <div className="mt-6 rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-            <h2 className="text-2xl font-bold text-slate-700">Users ({users.length})</h2>
-            <div className="mt-6 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200">
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Name</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Email</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Role</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Created</th>
-                    <th className="px-4 py-3 text-left font-medium text-slate-400">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((user) => (
-                    <tr key={user.id} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="px-4 py-3 text-slate-700">{user.name}</td>
-                      <td className="px-4 py-3 text-slate-500">{user.email}</td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex rounded-full bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-1 text-xs font-medium text-orange-600">{user.role}</span>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-slate-400">{new Date(user.created_at).toLocaleDateString()}</td>
-                      <td className="px-4 py-3">
-                        <button onClick={() => handleDeleteUser(user.id)} className="text-red-400 hover:text-red-500 text-xs font-medium">Delete</button>
-                      </td>
+          <div className="mt-6 space-y-8">
+            {/* Organizers Section */}
+            <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
+              <div className="flex items-center gap-3 mb-6">
+                <h2 className="text-2xl font-bold text-slate-700">Organizers</h2>
+                <span className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-1 text-sm font-medium text-orange-600">
+                  {organizers.length}
+                </span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200">
+                      <th className="px-4 py-3 text-left font-medium text-slate-400">Name</th>
+                      <th className="px-4 py-3 text-left font-medium text-slate-400">Email</th>
+                      <th className="px-4 py-3 text-left font-medium text-slate-400">Created</th>
+                      <th className="px-4 py-3 text-left font-medium text-slate-400">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {organizers.length === 0 ? (
+                      <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-400">No organizers registered yet.</td></tr>
+                    ) : (
+                      organizers.map((user) => (
+                        <tr key={user.id} className="border-b border-slate-100 hover:bg-slate-50">
+                          <td className="px-4 py-3 text-slate-700 font-medium">{user.name}</td>
+                          <td className="px-4 py-3 text-slate-500">{user.email}</td>
+                          <td className="px-4 py-3 text-xs text-slate-400">{new Date(user.created_at).toLocaleDateString()}</td>
+                          <td className="px-4 py-3">
+                            <button onClick={() => handleDeleteUser(user.id, 'organizer')} className="text-red-400 hover:text-red-500 text-xs font-medium">Delete</button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Members Section */}
+            <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
+              <div className="flex items-center gap-3 mb-6">
+                <h2 className="text-2xl font-bold text-slate-700">Members</h2>
+                <span className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-50 to-blue-50 px-3 py-1 text-sm font-medium text-blue-600">
+                  {members.length}
+                </span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200">
+                      <th className="px-4 py-3 text-left font-medium text-slate-400">Name</th>
+                      <th className="px-4 py-3 text-left font-medium text-slate-400">Email</th>
+                      <th className="px-4 py-3 text-left font-medium text-slate-400">Created</th>
+                      <th className="px-4 py-3 text-left font-medium text-slate-400">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {members.length === 0 ? (
+                      <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-400">No members registered yet.</td></tr>
+                    ) : (
+                      members.map((user) => (
+                        <tr key={user.id} className="border-b border-slate-100 hover:bg-slate-50">
+                          <td className="px-4 py-3 text-slate-700 font-medium">{user.name}</td>
+                          <td className="px-4 py-3 text-slate-500">{user.email}</td>
+                          <td className="px-4 py-3 text-xs text-slate-400">{new Date(user.created_at).toLocaleDateString()}</td>
+                          <td className="px-4 py-3">
+                            <button onClick={() => handleDeleteUser(user.id, 'member')} className="text-red-400 hover:text-red-500 text-xs font-medium">Delete</button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}

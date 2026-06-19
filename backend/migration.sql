@@ -46,3 +46,9 @@ ALTER TABLE organizer_applications
 -- Section 7: Declaration
 ALTER TABLE organizer_applications
   ADD COLUMN IF NOT EXISTS authorized_representative BOOLEAN DEFAULT FALSE;
+
+-- ============================================================
+-- Migration: Add avatar_url to users table
+-- ============================================================
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(500);

@@ -12,10 +12,28 @@ router.post('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
   }
 
   try {
+    // Check previous RSVP status before upsert
+    const prevRsvp = await query(
+      'SELECT status FROM rsvps WHERE user_id = $1 AND event_id = $2',
+      [req.userId, event_id]
+    );
+    const prevStatus = prevRsvp.rows[0]?.status;
+
     const result = await query(
       'INSERT INTO rsvps (user_id, event_id, status) VALUES ($1, $2, $3) ON CONFLICT (user_id, event_id) DO UPDATE SET status = $3 RETURNING id, user_id, event_id, status',
       [req.userId, event_id, status || 'attending']
     );
+
+    // Update attendee_count based on status change
+    const newStatus = result.rows[0]?.status;
+    if (prevStatus !== newStatus) {
+      if (newStatus === 'attending') {
+        await query('UPDATE events SET attendee_count = attendee_count + 1 WHERE id = $1', [event_id]);
+      } else if (prevStatus === 'attending') {
+        // User changed from attending to not_attending
+        await query('UPDATE events SET attendee_count = GREATEST(attendee_count - 1, 0) WHERE id = $1', [event_id]);
+      }
+    }
 
     // Log activity
     const [user, event] = await Promise.all([
@@ -24,7 +42,7 @@ router.post('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
     ]);
     await query(
       'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
-      [req.userId, user.rows[0]?.name || '', 'event_rsvp', `RSVPed to event: ${event.rows[0]?.title || ''}`]
+      [req.userId, user.rows[0]?.name || '', 'event_rsvp', `${newStatus === 'attending' ? 'RSVPed attending to' : 'Marked not attending for'} event: ${event.rows[0]?.title || ''}`]
     );
 
     res.status(201).json(result.rows[0]);
@@ -134,10 +152,20 @@ router.get('/community/is-member/:communityId', authMiddleware, async (req: Auth
 router.post('/community/join/:communityId', authMiddleware, async (req: AuthRequest, res, next) => {
   const communityId = Number(req.params.communityId);
   try {
-    await query('INSERT INTO community_members (user_id, community_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
-      req.userId,
-      communityId,
-    ]);
+    // Check if user is already a member
+    const existing = await query(
+      'SELECT 1 FROM community_members WHERE user_id = $1 AND community_id = $2',
+      [req.userId, communityId]
+    );
+
+    if (existing.rows.length === 0) {
+      await query('INSERT INTO community_members (user_id, community_id) VALUES ($1, $2)', [
+        req.userId,
+        communityId,
+      ]);
+      // Increment member_count only on first join
+      await query('UPDATE communities SET member_count = member_count + 1 WHERE id = $1', [communityId]);
+    }
 
     // Log activity
     const [user, community] = await Promise.all([
@@ -149,7 +177,7 @@ router.post('/community/join/:communityId', authMiddleware, async (req: AuthRequ
       [req.userId, user.rows[0]?.name || '', 'community_join', `Joined community: ${community.rows[0]?.name || ''}`]
     );
 
-    res.json({ message: 'Joined community' });
+    res.json({ message: 'Joined community', member_count: existing.rows.length === 0 ? 'incremented' : 'already_member' });
   } catch (error) {
     next(error);
   }

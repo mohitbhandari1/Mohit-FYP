@@ -6,19 +6,26 @@ export interface User {
   is_admin?: boolean;
   interests?: string;
   bio?: string;
+  avatar_url?: string;
 }
 
 export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000';
 
 /**
- * Default fetch options for API calls that include credentials (httpOnly cookies).
+ * Default fetch options for API calls.
+ * Uses Bearer token from localStorage as primary auth (works cross-origin).
+ * Falls back to httpOnly cookie (same-origin only).
  */
 export function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
   const url = `${BACKEND_URL}${path}`;
+  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
   return fetch(url, {
     ...options,
     credentials: 'include',
     headers: {
+      ...authHeaders,
       ...(options.headers || {}),
       ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     },

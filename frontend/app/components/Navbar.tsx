@@ -4,13 +4,24 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { useTheme } from '../lib/ThemeContext';
+import { useRouter } from 'next/navigation';
+import { logout, BACKEND_URL } from '../lib/auth';
 import Image from 'next/image';
 
 export default function Navbar() {
   const { user, isAuthenticated, loading } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
+
+  const handleLogout = async () => {
+    await logout();
+    router.push('/login');
+  };
+
+  const avatarSrc = user?.avatar_url ? `${BACKEND_URL}${user.avatar_url}` : null;
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/20 dark:border-slate-700/50 glass animate-fade-in-down">
@@ -46,16 +57,37 @@ export default function Navbar() {
                 <NavLink href="/my-events">My Events</NavLink>
                 <NavLink href="/my-communities">My Groups</NavLink>
                 <NavLink href="/apply">Start a Group</NavLink>
-                <NavLink href="/organizer">Dashboard</NavLink>
-                <Link
-                  href="/profile"
-                  className="ml-2 flex items-center gap-2 rounded-full bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-all hover:shadow-md hover:scale-105"
-                >
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/20 text-xs font-bold">
-                    {user?.name?.charAt(0).toUpperCase() || '?'}
-                  </span>
-                  <span className="hidden lg:inline">{user?.name}</span>
-                </Link>
+                <div className="ml-2 flex items-center gap-1.5">
+                  {/* Profile circle: links to /profile */}
+                  <Link
+                    href="/profile"
+                    className="flex items-center justify-center"
+                  >
+                    {avatarSrc && !avatarError ? (
+                      <img
+                        src={avatarSrc}
+                        alt={user?.name || ''}
+                        className="h-8 w-8 rounded-full border-2 border-white/50 object-cover shadow-sm"
+                        onError={() => setAvatarError(true)}
+                      />
+                    ) : (
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-amber-500 text-sm font-bold text-white shadow-sm transition-transform hover:scale-110">
+                        {user?.name?.charAt(0).toUpperCase() || '?'}
+                      </span>
+                    )}
+                  </Link>
+
+                  {/* Logout icon button on the side */}
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center justify-center rounded-lg p-1.5 text-slate-400 transition-all hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
+                    title="Logout"
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                  </button>
+                </div>
               </>
             ) : !loading ? (
               <div className="ml-2 flex items-center gap-2">
@@ -120,8 +152,16 @@ export default function Navbar() {
               <MobileNavLink href="/my-events" onClick={() => setMobileOpen(false)}>My Events</MobileNavLink>
               <MobileNavLink href="/my-communities" onClick={() => setMobileOpen(false)}>My Groups</MobileNavLink>
               <MobileNavLink href="/apply" onClick={() => setMobileOpen(false)}>Start a Group</MobileNavLink>
-              <MobileNavLink href="/organizer" onClick={() => setMobileOpen(false)}>Dashboard</MobileNavLink>
               <MobileNavLink href="/profile" onClick={() => setMobileOpen(false)}>Profile</MobileNavLink>
+              <button
+                onClick={() => { setMobileOpen(false); handleLogout(); }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-red-500 transition hover:bg-red-50 dark:hover:bg-red-900/20"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                Logout
+              </button>
             </>
           ) : !loading ? (
             <>

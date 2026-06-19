@@ -12,10 +12,12 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirect = searchParams.get('redirect') || '/';
+  const redirect = searchParams.get('redirect') || '/profile';
   const [needsPasswordChange, setNeedsPasswordChange] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -52,12 +54,18 @@ export default function LoginPage() {
         return;
       }
 
-      // Redirect admin users to admin panel
-      if (data.user?.role === 'admin') {
-        router.push('/admin');
-      } else {
-        router.push(redirect);
-      }
+      // Show success message and redirect after brief delay
+      setSuccess('Logged in successfully!');
+      setRedirecting(true);
+
+      setTimeout(() => {
+        // Use client-side navigation to preserve auth state in memory
+        if (data.user?.role === 'admin') {
+          router.push('/admin');
+        } else {
+          router.push(redirect);
+        }
+      }, 1200);
     } catch (err) {
       setError('An error occurred. Please try again.');
     } finally {
@@ -177,6 +185,12 @@ export default function LoginPage() {
           </div>
 
           {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">{error}</div>}
+          {success && <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-600 flex items-center gap-2">
+            <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            {success}
+          </div>}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -201,10 +215,10 @@ export default function LoginPage() {
             </div>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || redirecting}
               className="mt-2 w-full rounded-lg bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-2.5 font-semibold text-white shadow-sm transition-all hover:shadow-md hover:scale-[1.02] disabled:opacity-50"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {redirecting ? 'Redirecting...' : loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
 

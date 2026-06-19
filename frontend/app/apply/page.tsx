@@ -6,18 +6,6 @@ import { useRouter } from 'next/navigation';
 import Navbar from '../components/Navbar';
 import { apiFetch } from '../lib/auth';
 
-type Section = 'info' | 'social' | 'contact' | 'details' | 'verification' | 'account' | 'declaration';
-
-const SECTIONS: { id: Section; label: string; number: string }[] = [
-  { id: 'info', label: 'Organization / Community Information', number: '1' },
-  { id: 'social', label: 'Social Media & Website', number: '2' },
-  { id: 'contact', label: 'Contact Information', number: '3' },
-  { id: 'details', label: 'Community Details', number: '4' },
-  { id: 'verification', label: 'Verification Information', number: '5' },
-  { id: 'account', label: 'Account Setup', number: '6' },
-  { id: 'declaration', label: 'Declaration', number: '7' },
-];
-
 export default function ApplyPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -25,8 +13,6 @@ export default function ApplyPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [existingApp, setExistingApp] = useState<any>(null);
-  const [activeSection, setActiveSection] = useState<Section>('info');
-
   const [formData, setFormData] = useState({
     // Section 1: Organization/Community Information
     community_name: '',
@@ -101,12 +87,6 @@ export default function ApplyPage() {
     } else {
       setFormData({ ...formData, age_group: [...current, group] });
     }
-  };
-
-  const scrollToSection = (section: Section) => {
-    setActiveSection(section);
-    const el = document.getElementById(`section-${section}`);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -241,26 +221,6 @@ export default function ApplyPage() {
 
           {(!existingApp || existingApp.status === 'rejected') && !success && (
             <form onSubmit={handleSubmit} className="space-y-8">
-              {/* Progress / Navigation */}
-              <div className="sticky top-0 z-10 -mx-4 bg-gradient-to-br from-slate-50 via-white to-orange-50 px-4 py-3 shadow-sm">
-                <div className="flex gap-1 overflow-x-auto pb-1">
-                  {SECTIONS.map((sec) => (
-                    <button
-                      key={sec.id}
-                      type="button"
-                      onClick={() => scrollToSection(sec.id)}
-                      className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-                        activeSection === sec.id
-                          ? 'bg-orange-500 text-white shadow-sm'
-                          : 'bg-white text-slate-500 border border-slate-200 hover:border-orange-300 hover:text-orange-600'
-                      }`}
-                    >
-                      {sec.number}. {sec.label.split(' ')[0]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               {/* ===== SECTION 1: Organization / Community Information ===== */}
               <div id="section-info" className="scroll-mt-20 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm">
                 <div className="mb-6 flex items-center gap-3">

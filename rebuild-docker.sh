@@ -7,10 +7,10 @@ echo "================================================"
 
 cd "$(dirname "$0")"
 
-# Step 1: Stop all containers and remove volumes
+# Step 1: Stop containers gracefully (preserve database volume)
 echo ""
-echo "[1/7] Stopping all containers and removing volumes..."
-docker compose -f docker-compose.local.yml down --remove-orphans -v 2>/dev/null || true
+echo "[1/7] Stopping containers (preserving database volume)..."
+docker compose -f docker-compose.local.yml down --remove-orphans 2>/dev/null || true
 echo "  Done."
 
 # Step 2: Build with no cache

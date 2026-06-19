@@ -1,6 +1,9 @@
 import express from 'express';
 import bcryptjs from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import { query } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { sendEmail, welcomeEmail } from '../email';
@@ -168,10 +171,39 @@ router.post('/logout', (_req, res) => {
   res.json({ message: 'Logged out successfully' });
 });
 
+// ─── Avatar Upload Setup ───
+const avatarStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    const dir = path.join(__dirname, '../../uploads/avatars');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, `avatar-${uniqueSuffix}${ext}`);
+  },
+});
+
+const uploadAvatar = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only JPEG, PNG, GIF, and WebP images are allowed'));
+    }
+  },
+});
+
 router.get('/me', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     const result = await query(
-      'SELECT id, name, email, role, interests, bio, is_admin, created_at FROM users WHERE id = $1',
+      'SELECT id, name, email, role, interests, bio, is_admin, avatar_url, created_at FROM users WHERE id = $1',
       [req.userId]
     );
     if (result.rows.length === 0) {
@@ -183,11 +215,58 @@ router.get('/me', authMiddleware, async (req: AuthRequest, res, next) => {
   }
 });
 
+// POST /api/auth/avatar - Upload profile avatar
+router.post('/avatar', authMiddleware, uploadAvatar.single('avatar'), async (req: AuthRequest, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const avatarUrl = '/uploads/avatars/' + req.file.filename;
+
+    // Delete old avatar file if exists
+    const oldUser = await query('SELECT avatar_url FROM users WHERE id = $1', [req.userId]);
+    if (oldUser.rows.length > 0 && oldUser.rows[0].avatar_url) {
+      const oldPath = path.join(__dirname, '../..', oldUser.rows[0].avatar_url);
+      if (fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
+      }
+    }
+
+    const result = await query(
+      'UPDATE users SET avatar_url = $1 WHERE id = $2 RETURNING id, avatar_url',
+      [avatarUrl, req.userId]
+    );
+
+    res.json({ avatar_url: result.rows[0].avatar_url });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/auth/avatar - Remove profile avatar
+router.delete('/avatar', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    const user = await query('SELECT avatar_url FROM users WHERE id = $1', [req.userId]);
+    if (user.rows.length > 0 && user.rows[0].avatar_url) {
+      const oldPath = path.join(__dirname, '../..', user.rows[0].avatar_url);
+      if (fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
+      }
+    }
+
+    await query('UPDATE users SET avatar_url = NULL WHERE id = $1', [req.userId]);
+    res.json({ message: 'Avatar removed' });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.put('/profile', authMiddleware, async (req: AuthRequest, res, next) => {
   const { name, bio, interests } = req.body;
   try {
     const result = await query(
-      'UPDATE users SET name = COALESCE($1, name), bio = COALESCE($2, bio), interests = COALESCE($3, interests) WHERE id = $4 RETURNING id, name, email, bio, interests',
+      'UPDATE users SET name = COALESCE($1, name), bio = COALESCE($2, bio), interests = COALESCE($3, interests) WHERE id = $4 RETURNING id, name, email, bio, interests, avatar_url',
       [name || null, bio || null, interests || null, req.userId]
     );
     res.json(result.rows[0]);

@@ -4,10 +4,18 @@ import { authMiddleware, adminMiddleware, AuthRequest } from '../middleware/auth
 
 const router = express.Router();
 
-// Admin only - List all users
+// Admin only - List all users (optionally filter by role)
 router.get('/users', authMiddleware, adminMiddleware, async (req, res, next) => {
+  const { role } = req.query;
   try {
-    const result = await query('SELECT id, name, email, role, is_admin, created_at FROM users ORDER BY created_at DESC');
+    let sql = 'SELECT id, name, email, role, is_admin, created_at FROM users';
+    const params: any[] = [];
+    if (role && typeof role === 'string') {
+      sql += ' WHERE role = $1';
+      params.push(role);
+    }
+    sql += ' ORDER BY created_at DESC';
+    const result = await query(sql, params);
     res.json(result.rows);
   } catch (error) {
     next(error);
