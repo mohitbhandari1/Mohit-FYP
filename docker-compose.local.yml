@@ -49,6 +49,7 @@ services:
       PGPASSWORD: postgres
       PGDATABASE: smart_connects
       JWT_SECRET: smart-connects-local-jwt-secret-2026
+      GEMINI_API_KEY: AQ.Ab8RN6L5DLfcbH_XdPftr3AmIEoxaEbBgNsEG1tFXrEFZ7tThQ
     depends_on:
       db:
         condition: service_healthy
@@ -57,6 +58,8 @@ services:
       - ./backend/src:/app/src
       # Prevent host node_modules from overriding container's
       - /app/node_modules
+      # Persist uploaded images (avatars, banners, logos) across container restarts
+      - ./backend/uploads:/app/uploads
 
   # ─── 3. Seed Data (run once — populates sample users & events) ───
   seed:

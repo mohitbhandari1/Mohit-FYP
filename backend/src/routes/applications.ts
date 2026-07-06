@@ -267,6 +267,33 @@ adminApplicationsRouter.put('/:id/review', async (req: AuthRequest, res, next) =
       // Update user role to 'organizer'
       await query('UPDATE users SET role = $1 WHERE id = $2', ['organizer', application.user_id]);
 
+      // Create the community for the applicant
+      const communityResult = await query(
+        `INSERT INTO communities (name, description, category, owner_id, member_count, website, facebook, instagram, linkedin, tiktok, location, is_verified)
+         VALUES ($1, $2, $3, $4, 1, $5, $6, $7, $8, $9, $10, TRUE)
+         RETURNING id`,
+        [
+          application.community_name,
+          application.description,
+          application.category || null,
+          application.user_id,
+          application.website || null,
+          application.facebook || null,
+          application.instagram || null,
+          application.linkedin || null,
+          application.tiktok || null,
+          application.address || null,
+        ]
+      );
+
+      const communityId = communityResult.rows[0].id;
+
+      // Add the applicant as first member of the community
+      await query(
+        'INSERT INTO community_members (user_id, community_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [application.user_id, communityId]
+      );
+
       // Update application with temp password
       await query(
         `UPDATE organizer_applications 
@@ -300,6 +327,7 @@ adminApplicationsRouter.put('/:id/review', async (req: AuthRequest, res, next) =
         temp_password: tempPassword,
         user_id: application.user_id,
         community_name: application.community_name,
+        community_id: communityId,
       });
     } else {
       // Rejected - just update status

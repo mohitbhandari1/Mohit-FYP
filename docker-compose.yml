@@ -42,6 +42,8 @@ services:
     volumes:
       - ./backend/src:/app/src
       - /app/node_modules
+      # Persist uploaded images across container restarts
+      - ./backend/uploads:/app/uploads
 
   # ─── Seed data (runs one-time, then exits) ───
   seed:
@@ -79,6 +81,7 @@ services:
     volumes:
       - ./frontend/app:/app/app
       - /app/node_modules
+      - /app/.next
 
 volumes:
   postgres_data:

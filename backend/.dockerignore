@@ -4,4 +4,6 @@ dist/
 .gitignore
 *.md
 .env
+.env.example
 .DS_Store
+uploads/

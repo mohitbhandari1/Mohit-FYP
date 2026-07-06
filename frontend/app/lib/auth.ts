@@ -7,18 +7,26 @@ export interface User {
   interests?: string;
   bio?: string;
   avatar_url?: string;
+  banner_image?: string;
+  created_at?: string;
+  owns_community?: boolean;
 }
 
 export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000';
 
 /**
  * Default fetch options for API calls.
- * Uses Bearer token from localStorage as primary auth (works cross-origin).
- * Falls back to httpOnly cookie (same-origin only).
+ * Uses Next.js proxy so requests go same-origin — no CORS issues.
+ * Bearer token from localStorage is sent as Authorization header.
+ * httpOnly cookie is also sent via credentials: 'include'.
  */
 export function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
-  const url = `${BACKEND_URL}${path}`;
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  // Use relative URL when available (routed through Next.js proxy),
+  // fall back to full BACKEND_URL for direct connections
+  const isServer = typeof window === 'undefined';
+  const url = isServer ? `${BACKEND_URL}${path}` : path;
+
+  const token = !isServer ? localStorage.getItem('token') : null;
   const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
   return fetch(url, {
@@ -27,6 +35,7 @@ export function apiFetch(path: string, options: RequestInit = {}): Promise<Respo
     headers: {
       ...authHeaders,
       ...(options.headers || {}),
+      // Don't set Content-Type for FormData — browser sets it with boundary
       ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     },
   });

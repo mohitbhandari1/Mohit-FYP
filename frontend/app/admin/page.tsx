@@ -2,653 +2,562 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import AdminNavbar from '../components/AdminNavbar';
+import Navbar from '../components/Navbar';
+import Chatbot from '../components/Chatbot';
+import ConfirmModal from '../components/ConfirmModal';
+import { SkeletonTable } from '../components/Skeleton';
 import { apiFetch } from '../lib/auth';
 
-type Tab = 'overview' | 'applications' | 'communities' | 'events' | 'users' | 'activity';
+type Tab = 'overview' | 'users' | 'applications' | 'activity';
 
 export default function AdminDashboard() {
-  const [organizers, setOrganizers] = useState<any[]>([]);
-  const [members, setMembers] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
+  const [users, setUsers] = useState<any[]>([]);
   const [applications, setApplications] = useState<any[]>([]);
-  const [selectedApp, setSelectedApp] = useState<any>(null);
-  const [appDetail, setAppDetail] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [approving, setApproving] = useState(false);
-  const [adminNotes, setAdminNotes] = useState('');
-
-  // Communities management
-  const [allCommunities, setAllCommunities] = useState<any[]>([]);
-  const [editingCommunity, setEditingCommunity] = useState<any>(null);
-  const [communityEditForm, setCommunityEditForm] = useState({ name: '', description: '', category: '', website: '' });
-
-  // Events management
-  const [allEvents, setAllEvents] = useState<any[]>([]);
-  const [editingEvent, setEditingEvent] = useState<any>(null);
-  const [eventEditForm, setEventEditForm] = useState({ title: '', description: '', location: '', event_date: '' });
-
-  // Activity log
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [processingApp, setProcessingApp] = useState<number | null>(null);
   const [activities, setActivities] = useState<any[]>([]);
-  const [activityStats, setActivityStats] = useState<any[]>([]);
-
+  const [activityFilter, setActivityFilter] = useState<string>('all');
+  const [loadingActivity, setLoadingActivity] = useState(false);
+  const [communities, setCommunities] = useState<any[]>([]);
+  const [adminEvents, setAdminEvents] = useState<any[]>([]);
+  const [deleteCommunityTarget, setDeleteCommunityTarget] = useState<any>(null);
+  const [deleteEventTarget, setDeleteEventTarget] = useState<any>(null);
   const router = useRouter();
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const adminHeaders = { 'x-admin': 'true' };
+        const meRes = await apiFetch('/api/auth/me');
+        if (!meRes.ok) { router.push('/login'); return; }
+        const currentUser = await meRes.json();
+        if (!currentUser.is_admin && currentUser.role !== 'admin') { router.push('/'); return; }
 
-        const [organizersRes, membersRes, statsRes, appsRes, communitiesRes, eventsRes, activityRes, activityStatsRes] = await Promise.all([
-          apiFetch('/api/admin/users?role=organizer', { headers: adminHeaders }),
-          apiFetch('/api/admin/users?role=member', { headers: adminHeaders }),
-          apiFetch('/api/admin/stats', { headers: adminHeaders }),
-          apiFetch('/api/admin/applications', { headers: adminHeaders }),
-          apiFetch('/api/admin/communities', { headers: adminHeaders }),
-          apiFetch('/api/admin/events', { headers: adminHeaders }),
-          apiFetch('/api/admin/activity', { headers: adminHeaders }),
-          apiFetch('/api/admin/activity/stats', { headers: adminHeaders }),
+        const [statsRes, usersRes, appsRes, commRes, evRes] = await Promise.all([
+          apiFetch('/api/admin/stats'),
+          apiFetch('/api/admin/users'),
+          apiFetch('/api/admin/applications'),
+          apiFetch('/api/admin/communities'),
+          apiFetch('/api/admin/events'),
         ]);
 
-        if (!organizersRes.ok || !membersRes.ok || !statsRes.ok) {
-          router.push('/');
-          return;
-        }
-
-        setOrganizers(await organizersRes.json());
-        setMembers(await membersRes.json());
-        setStats(await statsRes.json());
-        setApplications(await appsRes.json());
-        setAllCommunities(await communitiesRes.json());
-        setAllEvents(await eventsRes.json());
-        setActivities(await activityRes.json());
-        setActivityStats(await activityStatsRes.json());
-      } catch (err) {
-        setError('Failed to load admin data');
-      } finally {
-        setLoading(false);
-      }
+        if (statsRes.ok) setStats(await statsRes.json());
+        if (usersRes.ok) setUsers(await usersRes.json());
+        if (appsRes.ok) setApplications(await appsRes.json());
+        if (commRes.ok) setCommunities(await commRes.json());
+        if (evRes.ok) setAdminEvents(await evRes.json());
+      } catch (err) { setError('Failed to load admin data'); }
+      finally { setLoading(false); }
     };
-
     fetchData();
   }, [router]);
 
-  // ===== User Management =====
-  const handleDeleteUser = async (userId: number, role: string) => {
-    if (!confirm('Are you sure you want to delete this user?')) return;
+  // Fetch activity log when tab or filter changes
+  useEffect(() => {
+    if (activeTab !== 'activity') return;
+    const fetchActivity = async () => {
+      setLoadingActivity(true);
+      try {
+        const params = activityFilter !== 'all' ? `?action=${activityFilter}` : '';
+        const res = await apiFetch(`/api/admin/activity${params}`);
+        if (res.ok) setActivities(await res.json());
+      } catch (err) { console.error('Failed to load activity'); }
+      finally { setLoadingActivity(false); }
+    };
+    fetchActivity();
+  }, [activeTab, activityFilter]);
+
+  const refreshStats = async () => {
+    const res = await apiFetch('/api/admin/stats');
+    if (res.ok) setStats(await res.json());
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deleteTarget) return;
     try {
-      const res = await apiFetch(`/api/admin/users/${userId}`, {
-        method: 'DELETE',
-        headers: { 'x-admin': 'true' },
-      });
-      if (!res.ok) { setError('Failed to delete user'); return; }
-      if (role === 'organizer') {
-        setOrganizers(organizers.filter((u) => u.id !== userId));
-      } else {
-        setMembers(members.filter((u) => u.id !== userId));
+      const res = await apiFetch(`/api/admin/users/${deleteTarget.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setUsers((prev) => prev.filter((u) => u.id !== deleteTarget.id));
+        // Refresh communities and events too — cascade may have deleted them
+        const [commRes, evRes] = await Promise.all([
+          apiFetch('/api/admin/communities'),
+          apiFetch('/api/admin/events'),
+        ]);
+        if (commRes.ok) setCommunities(await commRes.json());
+        if (evRes.ok) setAdminEvents(await evRes.json());
+        await refreshStats();
       }
-    } catch (err) { setError('An error occurred'); }
+    } catch (err) { console.error('Failed to delete user'); }
+    finally { setDeleteTarget(null); }
   };
 
-  // ===== Application Review =====
-  const handleViewApplication = async (appId: number) => {
+  const handleDeleteCommunity = async () => {
+    if (!deleteCommunityTarget) return;
     try {
-      const res = await apiFetch(`/api/admin/applications/${appId}`, {
-        headers: { 'x-admin': 'true' },
-      });
-      const data = await res.json();
-      setAppDetail(data);
-      setSelectedApp(data);
-      setAdminNotes('');
-    } catch (err) { setError('Failed to load application details'); }
+      const res = await apiFetch(`/api/admin/communities/${deleteCommunityTarget.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setCommunities((prev) => prev.filter((c) => c.id !== deleteCommunityTarget.id));
+        setAdminEvents((prev) => prev.filter((e) => e.community_id !== deleteCommunityTarget.id));
+        await refreshStats();
+      }
+    } catch (err) { console.error('Failed to delete community'); }
+    finally { setDeleteCommunityTarget(null); }
   };
 
-  const handleReview = async (appId: number, status: 'approved' | 'rejected') => {
-    setApproving(true);
+  const handleDeleteEvent = async () => {
+    if (!deleteEventTarget) return;
+    try {
+      const res = await apiFetch(`/api/admin/events/${deleteEventTarget.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setAdminEvents((prev) => prev.filter((e) => e.id !== deleteEventTarget.id));
+        await refreshStats();
+      }
+    } catch (err) { console.error('Failed to delete event'); }
+    finally { setDeleteEventTarget(null); }
+  };
+
+  const handleApplication = async (appId: number, status: 'approved' | 'rejected') => {
+    setProcessingApp(appId);
     try {
       const res = await apiFetch(`/api/admin/applications/${appId}/review`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'x-admin': 'true' },
-        body: JSON.stringify({ status, admin_notes: adminNotes }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
       });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || 'Failed to review'); return; }
-      setApplications(applications.map((a) => a.id === appId ? { ...a, status } : a));
-      setSelectedApp(null);
-      setAppDetail(null);
-      if (status === 'approved') {
-        alert(`Application approved!\n\nTemporary password: ${data.temp_password}\n\nShare this with the applicant.`);
+      if (res.ok) {
+        setApplications((prev) => prev.map((a) => a.id === appId ? { ...a, status } : a));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(`Failed: ${data.error || res.statusText}`);
       }
-    } catch (err) { setError('An error occurred'); }
-    finally { setApproving(false); }
+    } catch (err) { 
+      console.error('Failed to process application', err);
+      alert('Network error. Please try again.');
+    }
+    finally { setProcessingApp(null); }
   };
 
-  // ===== Community Management =====
-  const handleEditCommunity = async (communityId: number) => {
-    try {
-      const res = await apiFetch(`/api/admin/communities/${communityId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'x-admin': 'true' },
-        body: JSON.stringify(communityEditForm),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || 'Failed to update'); return; }
-      setAllCommunities(allCommunities.map((c) => c.id === communityId ? { ...c, ...data } : c));
-      setEditingCommunity(null);
-    } catch (err) { setError('An error occurred'); }
+  const getRoleBadge = (role: string) => {
+    const styles: Record<string, string> = {
+      admin: 'bg-red-500/10 text-red-400 border-red-500/20',
+      organizer: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+      member: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
+    };
+    return styles[role] || styles.member;
   };
 
-  const handleDeleteCommunity = async (communityId: number) => {
-    if (!confirm('Delete this community permanently?')) return;
-    try {
-      const res = await apiFetch(`/api/admin/communities/${communityId}`, {
-        method: 'DELETE',
-        headers: { 'x-admin': 'true' },
-      });
-      if (!res.ok) { setError('Failed to delete'); return; }
-      setAllCommunities(allCommunities.filter((c) => c.id !== communityId));
-    } catch (err) { setError('An error occurred'); }
-  };
-
-  // ===== Event Management =====
-  const handleEditEvent = async (eventId: number) => {
-    try {
-      const res = await apiFetch(`/api/admin/events/${eventId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'x-admin': 'true' },
-        body: JSON.stringify(eventEditForm),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || 'Failed to update'); return; }
-      setAllEvents(allEvents.map((e) => e.id === eventId ? { ...e, ...data } : e));
-      setEditingEvent(null);
-    } catch (err) { setError('An error occurred'); }
-  };
-
-  const handleDeleteEvent = async (eventId: number) => {
-    if (!confirm('Delete this event permanently?')) return;
-    try {
-      const res = await apiFetch(`/api/admin/events/${eventId}`, {
-        method: 'DELETE',
-        headers: { 'x-admin': 'true' },
-      });
-      if (!res.ok) { setError('Failed to delete'); return; }
-      setAllEvents(allEvents.filter((e) => e.id !== eventId));
-    } catch (err) { setError('An error occurred'); }
-  };
-
-  const tabs: { id: Tab; label: string; badge?: number }[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'applications', label: 'Applications', badge: applications.filter((a) => a.status === 'pending').length },
-    { id: 'communities', label: 'Communities' },
-    { id: 'events', label: 'Events' },
-    { id: 'users', label: 'Users' },
-    { id: 'activity', label: 'Activity' },
-  ];
-
-  if (loading) return <div className="min-h-screen" />;
+  if (loading) return (
+    <main className="min-h-screen bg-slate-950">
+      <Navbar />
+      <section className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="animate-pulse space-y-6">
+          <div className="h-10 w-64 bg-white/5 rounded" />
+          <div className="grid grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => <div key={i} className="h-28 bg-white/5 rounded-2xl" />)}
+          </div>
+          <SkeletonTable rows={5} />
+        </div>
+      </section>
+      <Chatbot />
+    </main>
+  );
 
   return (
-    <main className="min-h-screen">
-      <AdminNavbar />
-      <section className="mx-auto max-w-7xl px-6 py-16 sm:px-8">
+    <main className="min-h-screen bg-slate-950">
+      <Navbar />
+      <section className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="animate-fade-in-up">
-        <h1 className="text-4xl font-bold text-slate-800 dark:text-white">Admin Dashboard</h1>
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">
+              Admin Dashboard
+            </h1>
+            <p className="mt-1 text-slate-400">Platform administration and management</p>
+          </div>
 
-        {error && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600">{error}</div>}
+          {error && (
+            <div className="mb-6 p-4 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-sm">{error}</div>
+          )}
 
-        {/* Tabs */}          <div className="mt-8 flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-700 pb-0">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`rounded-t-lg px-4 py-3 text-sm font-medium capitalize transition ${
-                activeTab === tab.id
-                  ? 'bg-white dark:bg-slate-800 text-orange-600 border border-b-0 border-slate-200 dark:border-slate-700 shadow-sm'
-                  : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'
-              }`}
-            >
-              {tab.label}
-              {tab.badge && tab.badge > 0 ? (
-                <span className="ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-yellow-500 text-xs font-bold text-slate-950">
-                  {tab.badge}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-
-        {/* ===== OVERVIEW TAB ===== */}
-        {activeTab === 'overview' && stats && (
-          <div className="mt-6">
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="card-hover rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm font-medium text-slate-400">Total Users</p>
-                <p className="mt-2 text-3xl font-bold bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">{stats.totalUsers}</p>
-              </div>
-              <div className="card-hover rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm font-medium text-slate-400">Total Communities</p>
-                <p className="mt-2 text-3xl font-bold bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">{stats.totalCommunities}</p>
-              </div>
-              <div className="card-hover rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm font-medium text-slate-400">Total Events</p>
-                <p className="mt-2 text-3xl font-bold bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">{stats.totalEvents}</p>
-              </div>
-              <div className="card-hover rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm font-medium text-slate-400">Pending Applications</p>
-                <p className="mt-2 text-3xl font-bold text-yellow-500">
-                  {applications.filter((a) => a.status === 'pending').length}
-                </p>
-              </div>
-              <div className="card-hover rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm font-medium text-slate-400">Approved Organizers</p>
-                <p className="mt-2 text-3xl font-bold text-green-500">
-                  {applications.filter((a) => a.status === 'approved').length}
-                </p>
-              </div>
-              <div className="card-hover rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm font-medium text-slate-400">Rejected</p>
-                <p className="mt-2 text-3xl font-bold text-red-500">
-                  {applications.filter((a) => a.status === 'rejected').length}
-                </p>
-              </div>
-            </div>
-
-            {/* Activity Stats Chart */}
-            {activityStats.length > 0 && (
-              <div className="mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-bold text-slate-700 mb-4">Platform Activity (30 days)</h2>
-                <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                  {activityStats.map((stat: any) => (
-                    <div key={stat.action} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
-                      <p className="text-xs font-medium text-slate-400 capitalize">{stat.action.replace(/_/g, ' ')}</p>
-                      <p className="mt-1 text-2xl font-bold text-orange-600">{stat.count}</p>
-                    </div>
-                  ))}
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+            <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center">
+                  <svg className="w-6 h-6 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-100">{stats?.totalUsers || users.length}</p>
+                  <p className="text-sm text-slate-400">Total Users</p>
                 </div>
               </div>
-            )}
+            </div>
+            <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                  <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-100">{stats?.totalCommunities || 0}</p>
+                  <p className="text-sm text-slate-400">Communities</p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                  <svg className="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-100">{stats?.totalEvents || 0}</p>
+                  <p className="text-sm text-slate-400">Events</p>
+                </div>
+              </div>
+            </div>
           </div>
-        )}
 
-        {/* ===== APPLICATIONS TAB ===== */}
-        {activeTab === 'applications' && (
-          <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_1.2fr]">
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-bold text-slate-700">Applications</h2>
-              {applications.length === 0 ? (
-                <p className="mt-4 text-slate-400">No applications yet.</p>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  {applications.map((app) => (
-                    <button
-                      key={app.id}
-                      onClick={() => handleViewApplication(app.id)}
-                      className={`w-full rounded-xl border p-4 text-left transition-all ${
-                        selectedApp?.id === app.id
-                          ? 'border-orange-500 bg-orange-50 shadow-sm'
-                          : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium text-slate-700">{app.community_name}</span>
-                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                          app.status === 'pending' ? 'bg-yellow-50 text-yellow-600'
-                          : app.status === 'approved' ? 'bg-green-50 text-green-600'
-                          : 'bg-red-50 text-red-500'
-                        }`}>{app.status}</span>
+          {/* Tab Bar */}
+          <div className="flex gap-1 mb-6 bg-white/[0.03] backdrop-blur-xl rounded-xl border border-white/10 p-1 w-fit">
+            {(['overview', 'users', 'applications', 'activity'] as const).map((tab) => (
+              <button key={tab} onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-all capitalize ${
+                  activeTab === tab ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                }`}>
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {/* Communities Table */}
+          {(activeTab === 'overview') && communities.length > 0 && (
+            <div className="mb-8 rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl overflow-hidden">
+              <div className="p-6 border-b border-white/5">
+                <h2 className="text-lg font-semibold text-slate-100">Communities</h2>
+                <p className="text-sm text-slate-400 mt-1">{communities.length} total communities</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-white/5">
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Name</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Category</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Owner</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Members</th>
+                      <th className="text-right px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {communities.map((c: any) => (
+                      <tr key={c.id} className="hover:bg-white/[0.02] transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-slate-200">{c.name}</span>
+                            {c.is_verified && (
+                              <svg className="w-4 h-4 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-400">{c.category || '-'}</td>
+                        <td className="px-6 py-4 text-sm text-slate-400">{c.owner_name || 'None'}</td>
+                        <td className="px-6 py-4 text-sm text-slate-400">{c.member_count || 0}</td>
+                        <td className="px-6 py-4 text-right">
+                          <button onClick={() => setDeleteCommunityTarget(c)}
+                            className="text-xs text-red-400/70 hover:text-red-400 transition-colors">
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Events Table */}
+          {(activeTab === 'overview') && adminEvents.length > 0 && (
+            <div className="mb-8 rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl overflow-hidden">
+              <div className="p-6 border-b border-white/5">
+                <h2 className="text-lg font-semibold text-slate-100">Events</h2>
+                <p className="text-sm text-slate-400 mt-1">{adminEvents.length} total events</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-white/5">
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Title</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Community</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Date</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Attending</th>
+                      <th className="text-right px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {adminEvents.map((ev: any) => (
+                      <tr key={ev.id} className="hover:bg-white/[0.02] transition-colors">
+                        <td className="px-6 py-4">
+                          <span className="text-sm font-medium text-slate-200">{ev.title}</span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-400">{ev.community_name || '-'}</td>
+                        <td className="px-6 py-4 text-sm text-slate-400">
+                          {ev.event_date ? new Date(ev.event_date).toLocaleDateString() : '-'}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-400">{ev.attendee_count || 0}</td>
+                        <td className="px-6 py-4 text-right">
+                          <button onClick={() => setDeleteEventTarget(ev)}
+                            className="text-xs text-red-400/70 hover:text-red-400 transition-colors">
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Users Table */}
+          {(activeTab === 'overview' || activeTab === 'users') && (
+            <div className="mb-8 rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl overflow-hidden">
+              <div className="p-6 border-b border-white/5">
+                <h2 className="text-lg font-semibold text-slate-100">Users</h2>
+                <p className="text-sm text-slate-400 mt-1">{users.length} registered users</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-white/5">
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">User</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Email</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Role</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Joined</th>
+                      <th className="text-right px-6 py-3 text-xs font-medium text-slate-400 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {users.slice(0, activeTab === 'users' ? undefined : 10).map((user: any) => (
+                      <tr key={user.id} className="hover:bg-white/[0.02] transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
+                              <span className="text-xs font-medium text-amber-400">{user.name?.charAt(0)?.toUpperCase() || '?'}</span>
+                            </div>
+                            <span className="text-sm font-medium text-slate-200">{user.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-400">{user.email}</td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium border ${getRoleBadge(user.role)}`}>
+                            {user.role}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-400">
+                          {user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          {user.role !== 'admin' && (
+                            <button onClick={() => setDeleteTarget(user)}
+                              className="text-xs text-red-400/70 hover:text-red-400 transition-colors">
+                              Delete
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Applications */}
+          {(activeTab === 'overview' || activeTab === 'applications') && (
+            <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl overflow-hidden">
+              <div className="p-6 border-b border-white/5">
+                <h2 className="text-lg font-semibold text-slate-100">Organizer Applications</h2>
+                <p className="text-sm text-slate-400 mt-1">{applications.filter((a) => a.status === 'pending').length} pending</p>
+              </div>
+              <div className="divide-y divide-white/5">
+                {applications.length > 0 ? applications.map((app: any) => (
+                  <div key={app.id} className="p-6 hover:bg-white/[0.01] transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-medium text-slate-200">{app.user_name || app.name || `User #${app.user_id}`}</h4>
+                        <p className="text-sm text-slate-400 mt-0.5">{app.organization_name || app.community_name || 'N/A'}</p>
+                        {app.reason && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{app.reason}</p>}
                       </div>
-                      <p className="mt-1 text-xs text-slate-400">by {app.user_name} • {new Date(app.created_at).toLocaleDateString()}</p>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {app.category && <span className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{app.category}</span>}
-                        {app.org_type && <span className="inline-block rounded-full bg-orange-50 px-2 py-0.5 text-xs text-orange-600">{app.org_type}</span>}
+                      <div className="flex items-center gap-3">
+                        {app.status === 'pending' ? (
+                          <>
+                            <button
+                              onClick={() => handleApplication(app.id, 'approved')}
+                              disabled={processingApp === app.id}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all disabled:opacity-50">
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleApplication(app.id, 'rejected')}
+                              disabled={processingApp === app.id}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-all disabled:opacity-50">
+                              Reject
+                            </button>
+                          </>
+                        ) : (
+                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+                            app.status === 'approved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'
+                          }`}>
+                            {app.status}
+                          </span>
+                        )}
                       </div>
+                    </div>
+                  </div>
+                )) : (
+                  <div className="p-8 text-center text-sm text-slate-500">No applications yet</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Activity Log */}
+          {activeTab === 'activity' && (
+            <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl overflow-hidden">
+              <div className="p-6 border-b border-white/5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-100">Activity History</h2>
+                    <p className="text-sm text-slate-400 mt-1">Track all admin and user actions</p>
+                  </div>
+                </div>
+                {/* Action type filter */}
+                <div className="flex flex-wrap gap-2 mt-4">
+                  {[
+                    { label: 'All', value: 'all' },
+                    { label: 'Deleted', value: 'deleted' },
+                    { label: 'Approved', value: 'approved' },
+                    { label: 'Created', value: 'created' },
+                    { label: 'Join/Leave', value: 'join' },
+                  ].map((f) => (
+                    <button key={f.value} onClick={() => setActivityFilter(f.value)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                        activityFilter === f.value
+                          ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-black shadow-sm'
+                          : 'bg-white/5 text-slate-400 border border-white/10 hover:border-amber-500/30 hover:text-amber-400'
+                      }`}>
+                      {f.label}
                     </button>
                   ))}
                 </div>
-              )}
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              {!appDetail ? (
-                <div className="flex h-full items-center justify-center"><p className="text-slate-400">Select an application to review</p></div>
+              </div>
+              {loadingActivity ? (
+                <div className="p-8 text-center">
+                  <div className="w-6 h-6 border-2 border-amber-500/30 border-t-amber-400 rounded-full animate-spin mx-auto" />
+                  <p className="text-sm text-slate-500 mt-3">Loading activity...</p>
+                </div>
+              ) : activities.length > 0 ? (
+                <div className="divide-y divide-white/5">
+                  {activities.map((act: any) => (
+                    <div key={act.id} className="p-4 sm:p-5 hover:bg-white/[0.01] transition-colors">
+                      <div className="flex items-start gap-4">
+                        {/* Action icon */}
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                          act.action?.includes('deleted') ? 'bg-red-500/10' :
+                          act.action?.includes('approved') ? 'bg-emerald-500/10' :
+                          act.action?.includes('created') || act.action?.includes('joined') || act.action?.includes('rsvp') ? 'bg-amber-500/10' :
+                          act.action?.includes('rejected') ? 'bg-red-500/10' :
+                          'bg-slate-500/10'
+                        }`}>
+                          {act.action?.includes('deleted') || act.action?.includes('rejected') ? (
+                            <svg className="w-4.5 h-4.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          ) : act.action?.includes('approved') ? (
+                            <svg className="w-4.5 h-4.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          ) : act.action?.includes('created') || act.action?.includes('joined') || act.action?.includes('rsvp') ? (
+                            <svg className="w-4.5 h-4.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                            </svg>
+                          ) : (
+                            <svg className="w-4.5 h-4.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          )}
+                        </div>
+                        {/* Activity details */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-slate-200">
+                              {act.user_name || 'System'}
+                            </span>
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+                              act.action?.includes('deleted') ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                              act.action?.includes('approved') ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                              act.action?.includes('rejected') ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                              act.action?.includes('created') ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                              'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                            }`}>
+                              {act.action?.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-400 mt-1">{act.description}</p>
+                          <p className="text-xs text-slate-600 mt-1">
+                            {new Date(act.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <div>
-                  <h2 className="text-xl font-bold text-slate-700">{appDetail.community_name}</h2>
-                  <p className="mt-1 text-sm text-slate-500">Applicant: {appDetail.user_name} ({appDetail.user_email})</p>
-                  
-                  {/* Section 1: Organization Info */}
-                  <div className="mt-6 border-b border-slate-100 pb-3">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Organization / Community Information</p>
-                  </div>
-                  <div className="mt-3 space-y-3">
-                    <div><label className="text-xs font-medium text-slate-400">Description</label><p className="mt-1 text-sm text-slate-600">{appDetail.description}</p></div>
-                    <div className="grid grid-cols-2 gap-4">
-                      {appDetail.org_type && <div><label className="text-xs font-medium text-slate-400">Type</label><p className="mt-1 text-sm text-slate-600">{appDetail.org_type}</p></div>}
-                      {appDetail.year_established && <div><label className="text-xs font-medium text-slate-400">Year Established</label><p className="mt-1 text-sm text-slate-600">{new Date(appDetail.year_established).toLocaleDateString()}</p></div>}
-                      {appDetail.category && <div><label className="text-xs font-medium text-slate-400">Category</label><p className="mt-1 text-sm text-slate-600">{appDetail.category}</p></div>}
-                      {appDetail.preferred_username && <div><label className="text-xs font-medium text-slate-400">Preferred Username</label><p className="mt-1 text-sm text-slate-600">{appDetail.preferred_username}</p></div>}
-                    </div>
-                  </div>
-
-                  {/* Section 2: Social Media */}
-                  {(appDetail.facebook || appDetail.instagram || appDetail.website || appDetail.linkedin || appDetail.tiktok) && (
-                    <>
-                      <div className="mt-5 border-b border-slate-100 pb-3">
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Social Media &amp; Website</p>
-                      </div>
-                      <div className="mt-3 grid grid-cols-2 gap-4">
-                        {appDetail.facebook && <div><label className="text-xs font-medium text-slate-400">Facebook</label><p className="mt-1"><a href={appDetail.facebook} target="_blank" rel="noopener noreferrer" className="text-sm text-orange-600 hover:underline">{appDetail.facebook}</a></p></div>}
-                        {appDetail.instagram && <div><label className="text-xs font-medium text-slate-400">Instagram</label><p className="mt-1"><a href={appDetail.instagram} target="_blank" rel="noopener noreferrer" className="text-sm text-orange-600 hover:underline">{appDetail.instagram}</a></p></div>}
-                        {appDetail.website && <div><label className="text-xs font-medium text-slate-400">Website</label><p className="mt-1"><a href={appDetail.website} target="_blank" rel="noopener noreferrer" className="text-sm text-orange-600 hover:underline">{appDetail.website}</a></p></div>}
-                        {appDetail.linkedin && <div><label className="text-xs font-medium text-slate-400">LinkedIn</label><p className="mt-1"><a href={appDetail.linkedin} target="_blank" rel="noopener noreferrer" className="text-sm text-orange-600 hover:underline">{appDetail.linkedin}</a></p></div>}
-                        {appDetail.tiktok && <div><label className="text-xs font-medium text-slate-400">TikTok</label><p className="mt-1"><a href={appDetail.tiktok} target="_blank" rel="noopener noreferrer" className="text-sm text-orange-600 hover:underline">{appDetail.tiktok}</a></p></div>}
-                      </div>
-                    </>
-                  )}
-
-                  {/* Section 3: Contact Information */}
-                  <div className="mt-5 border-b border-slate-100 pb-3">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Contact Information</p>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-4">
-                    {appDetail.contact_person_name && <div><label className="text-xs font-medium text-slate-400">Contact Person</label><p className="mt-1 text-sm text-slate-600">{appDetail.contact_person_name}</p></div>}
-                    {appDetail.position_role && <div><label className="text-xs font-medium text-slate-400">Position / Role</label><p className="mt-1 text-sm text-slate-600">{appDetail.position_role}</p></div>}
-                    {appDetail.contact_info && <div><label className="text-xs font-medium text-slate-400">Email</label><p className="mt-1 text-sm text-slate-600">{appDetail.contact_info}</p></div>}
-                    {appDetail.phone && <div><label className="text-xs font-medium text-slate-400">Phone</label><p className="mt-1 text-sm text-slate-600">{appDetail.phone}</p></div>}
-                    {appDetail.address && <div className="col-span-2"><label className="text-xs font-medium text-slate-400">Address</label><p className="mt-1 text-sm text-slate-600">{appDetail.address}</p></div>}
-                  </div>
-
-                  {/* Section 4: Community Details */}
-                  <div className="mt-5 border-b border-slate-100 pb-3">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Community Details</p>
-                  </div>
-                  <div className="mt-3 space-y-3">
-                    <div className="grid grid-cols-2 gap-4">
-                      {appDetail.target_audience && <div><label className="text-xs font-medium text-slate-400">Target Audience</label><p className="mt-1 text-sm text-slate-600">{appDetail.target_audience}</p></div>}
-                      {appDetail.age_group && <div><label className="text-xs font-medium text-slate-400">Age Group</label><p className="mt-1 text-sm text-slate-600">{appDetail.age_group}</p></div>}
-                    </div>
-                    {appDetail.activities && <div><label className="text-xs font-medium text-slate-400">Activities</label><p className="mt-1 text-sm text-slate-600 whitespace-pre-wrap">{appDetail.activities}</p></div>}
-                    {appDetail.benefits && <div><label className="text-xs font-medium text-slate-400">Benefits</label><p className="mt-1 text-sm text-slate-600 whitespace-pre-wrap">{appDetail.benefits}</p></div>}
-                    <div className="grid grid-cols-2 gap-4">
-                      {appDetail.expected_members && <div><label className="text-xs font-medium text-slate-400">Expected Members</label><p className="mt-1 text-sm text-slate-600">{appDetail.expected_members}</p></div>}
-                      {appDetail.meeting_frequency && <div><label className="text-xs font-medium text-slate-400">Meeting Frequency</label><p className="mt-1 text-sm text-slate-600">{appDetail.meeting_frequency}</p></div>}
-                    </div>
-                    {appDetail.experience && <div><label className="text-xs font-medium text-slate-400">Previous Experience</label><p className="mt-1 text-sm text-slate-600 whitespace-pre-wrap">{appDetail.experience}</p></div>}
-                    {appDetail.venue_details && <div><label className="text-xs font-medium text-slate-400">Venue Details</label><p className="mt-1 text-sm text-slate-600 whitespace-pre-wrap">{appDetail.venue_details}</p></div>}
-                    {appDetail.motivation && <div><label className="text-xs font-medium text-slate-400">Why join Smart Connects?</label><p className="mt-1 text-sm text-slate-600 whitespace-pre-wrap">{appDetail.motivation}</p></div>}
-                  </div>
-
-                  {/* Section 5: Verification */}
-                  {(appDetail.certificate_file || appDetail.logo_file || appDetail.additional_doc_file || appDetail.info_accurate !== null) && (
-                    <>
-                      <div className="mt-5 border-b border-slate-100 pb-3">
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Verification Information</p>
-                      </div>
-                      <div className="mt-3 space-y-2">
-                        {appDetail.certificate_file && <div><label className="text-xs font-medium text-slate-400">Registration Certificate</label><p className="mt-1"><a href={appDetail.certificate_file} target="_blank" rel="noopener noreferrer" className="text-sm text-orange-600 hover:underline">📄 View Document</a></p></div>}
-                        {appDetail.logo_file && <div><label className="text-xs font-medium text-slate-400">Organization Logo</label><p className="mt-1"><a href={appDetail.logo_file} target="_blank" rel="noopener noreferrer" className="text-sm text-orange-600 hover:underline">🖼 View Logo</a></p></div>}
-                        {appDetail.additional_doc_file && <div><label className="text-xs font-medium text-slate-400">Additional Documents</label><p className="mt-1"><a href={appDetail.additional_doc_file} target="_blank" rel="noopener noreferrer" className="text-sm text-orange-600 hover:underline">📄 View Documents</a></p></div>}
-                        {appDetail.info_accurate !== null && <div><label className="text-xs font-medium text-slate-400">Info Verified?</label><p className="mt-1 text-sm"><span className={`inline-flex items-center gap-1 ${appDetail.info_accurate ? 'text-green-600' : 'text-red-500'}`}>{appDetail.info_accurate ? '✅ Yes' : '❌ No'}</span></p></div>}
-                      </div>
-                    </>
-                  )}
-
-                  {/* Section 7: Declaration */}
-                  {appDetail.authorized_representative !== null && (
-                    <>
-                      <div className="mt-5 border-b border-slate-100 pb-3">
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Declaration</p>
-                      </div>
-                      <div className="mt-3">
-                        <div><label className="text-xs font-medium text-slate-400">Authorized Representative?</label>
-                          <p className="mt-1 text-sm"><span className={`inline-flex items-center gap-1 ${appDetail.authorized_representative ? 'text-green-600' : 'text-red-500'}`}>{appDetail.authorized_representative ? '✅ Yes' : '❌ No'}</span></p>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                  {appDetail.status === 'pending' ? (
-                    <div className="mt-8 space-y-4">
-                      <div><label className="block text-sm font-medium text-slate-600">Admin Notes</label>
-                        <textarea value={adminNotes} onChange={(e) => setAdminNotes(e.target.value)} rows={3}
-                          placeholder="Optional notes about the decision..."
-                          className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-slate-800 placeholder-slate-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20" />
-                      </div>
-                      <div className="flex gap-3">
-                        <button onClick={() => handleReview(appDetail.id, 'approved')} disabled={approving}
-                          className="flex-1 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 px-4 py-2 font-semibold text-white shadow-sm transition-all hover:shadow-md hover:scale-[1.02] disabled:opacity-50">
-                          {approving ? 'Processing...' : '✓ Approve'}
-                        </button>
-                        <button onClick={() => handleReview(appDetail.id, 'rejected')} disabled={approving}
-                          className="flex-1 rounded-xl bg-gradient-to-r from-red-500 to-rose-500 px-4 py-2 font-semibold text-white shadow-sm transition-all hover:shadow-md hover:scale-[1.02] disabled:opacity-50">
-                          {approving ? 'Processing...' : '✕ Reject'}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-8 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <p className="text-sm">Status: <span className={`font-medium ${appDetail.status === 'approved' ? 'text-green-600' : 'text-red-500'}`}>{appDetail.status}</span></p>
-                      {appDetail.admin_notes && <p className="mt-2 text-sm text-slate-500">Notes: {appDetail.admin_notes}</p>}
-                      {appDetail.reviewed_at && <p className="mt-1 text-xs text-slate-400">Reviewed: {new Date(appDetail.reviewed_at).toLocaleDateString()}</p>}
-                    </div>
-                  )}
-                </div>
+                <div className="p-8 text-center text-sm text-slate-500">No activity found</div>
               )}
             </div>
-          </div>
-        )}
-
-        {/* ===== COMMUNITIES TAB ===== */}
-        {activeTab === 'communities' && (
-          <div className="mt-6 rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-            <h2 className="text-2xl font-bold text-slate-700">All Communities ({allCommunities.length})</h2>
-            <div className="mt-6 space-y-4">
-              {allCommunities.map((community) => (
-                <div key={community.id} className="card-hover rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                  {editingCommunity === community.id ? (
-                    <div className="space-y-3">
-                      <input type="text" value={communityEditForm.name} onChange={(e) => setCommunityEditForm({...communityEditForm, name: e.target.value})}                          className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-slate-800 dark:text-slate-200" placeholder="Name" />
-                      <textarea value={communityEditForm.description} onChange={(e) => setCommunityEditForm({...communityEditForm, description: e.target.value})} rows={2}
-                        className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-slate-800 dark:text-slate-200" placeholder="Description" />
-                      <div className="flex gap-2">
-                        <input type="text" value={communityEditForm.category} onChange={(e) => setCommunityEditForm({...communityEditForm, category: e.target.value})}
-                          className="flex-1 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-slate-800 dark:text-slate-200" placeholder="Category" />
-                        <input type="url" value={communityEditForm.website} onChange={(e) => setCommunityEditForm({...communityEditForm, website: e.target.value})}
-                          className="flex-1 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-slate-800 dark:text-slate-200" placeholder="Website" />
-                      </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => handleEditCommunity(community.id)} className="rounded-lg bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-2 text-sm font-semibold text-white hover:shadow-md">Save</button>
-                        <button onClick={() => setEditingCommunity(null)} className="rounded-lg border border-slate-200 dark:border-slate-600 px-4 py-2 text-sm text-slate-500 dark:text-slate-400 hover:border-slate-300">Cancel</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200">{community.name}</h3>
-                          <span className="rounded-full bg-slate-100 dark:bg-slate-700 px-2 py-0.5 text-xs text-slate-500 dark:text-slate-400">{community.category || 'General'}</span>
-                        </div>
-                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{community.description}</p>
-                        <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-                          Owner: {community.owner_name || 'None'} • {community.member_count || 0} members • Created: {new Date(community.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div className="flex gap-2 ml-4 shrink-0">
-                        <button onClick={() => { setEditingCommunity(community.id); setCommunityEditForm({ name: community.name, description: community.description, category: community.category || '', website: community.website || '' }); }}
-                          className="rounded-lg border border-slate-200 dark:border-slate-600 px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 hover:border-orange-500 hover:text-orange-600 dark:hover:border-orange-400 dark:hover:text-orange-400">Edit</button>
-                        <button onClick={() => handleDeleteCommunity(community.id)}
-                          className="rounded-lg border border-red-200 dark:border-red-800 px-3 py-1.5 text-xs text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20">Delete</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {allCommunities.length === 0 && <p className="text-slate-400">No communities yet.</p>}
-            </div>
-          </div>
-        )}
-
-        {/* ===== EVENTS TAB ===== */}
-        {activeTab === 'events' && (
-          <div className="mt-6 rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-            <h2 className="text-2xl font-bold text-slate-700">All Events ({allEvents.length})</h2>
-            <div className="mt-6 space-y-4">
-              {allEvents.map((event) => (
-                <div key={event.id} className="card-hover rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                  {editingEvent === event.id ? (
-                    <div className="space-y-3">
-                      <input type="text" value={eventEditForm.title} onChange={(e) => setEventEditForm({...eventEditForm, title: e.target.value})}
-                        className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-slate-800 dark:text-slate-200" placeholder="Title" />
-                      <textarea value={eventEditForm.description} onChange={(e) => setEventEditForm({...eventEditForm, description: e.target.value})} rows={2}
-                        className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-slate-800 dark:text-slate-200" placeholder="Description" />
-                      <div className="flex gap-2">
-                        <input type="text" value={eventEditForm.location} onChange={(e) => setEventEditForm({...eventEditForm, location: e.target.value})}
-                          className="flex-1 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-slate-800 dark:text-slate-200" placeholder="Location" />
-                        <input type="datetime-local" value={eventEditForm.event_date} onChange={(e) => setEventEditForm({...eventEditForm, event_date: e.target.value})}
-                          className="flex-1 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-slate-800 dark:text-slate-200" />
-                      </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => handleEditEvent(event.id)} className="rounded-lg bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-2 text-sm font-semibold text-white hover:shadow-md">Save</button>
-                        <button onClick={() => setEditingEvent(null)} className="rounded-lg border border-slate-200 dark:border-slate-600 px-4 py-2 text-sm text-slate-500 dark:text-slate-400 hover:border-slate-300">Cancel</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200">{event.title}</h3>
-                          <span className="rounded-full bg-orange-100 dark:bg-orange-900/30 px-2 py-0.5 text-xs text-orange-600 dark:text-orange-300">{event.community_name}</span>
-                        </div>
-                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{event.description}</p>
-                        <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-                          {event.location || 'Online'} • {new Date(event.event_date).toLocaleDateString()} • {event.attendee_count || 0} attending
-                        </p>
-                      </div>
-                      <div className="flex gap-2 ml-4 shrink-0">
-                        <button onClick={() => { setEditingEvent(event.id); setEventEditForm({ title: event.title, description: event.description, location: event.location || '', event_date: event.event_date ? event.event_date.slice(0, 16) : '' }); }}
-                          className="rounded-lg border border-slate-200 dark:border-slate-600 px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 hover:border-orange-500 hover:text-orange-600 dark:hover:border-orange-400 dark:hover:text-orange-400">Edit</button>
-                        <button onClick={() => handleDeleteEvent(event.id)}
-                          className="rounded-lg border border-red-200 dark:border-red-800 px-3 py-1.5 text-xs text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20">Delete</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {allEvents.length === 0 && <p className="text-slate-400">No events yet.</p>}
-            </div>
-          </div>
-        )}
-
-        {/* ===== USERS TAB ===== */}
-        {activeTab === 'users' && (
-          <div className="mt-6 space-y-8">
-            {/* Organizers Section */}
-            <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-              <div className="flex items-center gap-3 mb-6">
-                <h2 className="text-2xl font-bold text-slate-700">Organizers</h2>
-                <span className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-1 text-sm font-medium text-orange-600">
-                  {organizers.length}
-                </span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200">
-                      <th className="px-4 py-3 text-left font-medium text-slate-400">Name</th>
-                      <th className="px-4 py-3 text-left font-medium text-slate-400">Email</th>
-                      <th className="px-4 py-3 text-left font-medium text-slate-400">Created</th>
-                      <th className="px-4 py-3 text-left font-medium text-slate-400">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {organizers.length === 0 ? (
-                      <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-400">No organizers registered yet.</td></tr>
-                    ) : (
-                      organizers.map((user) => (
-                        <tr key={user.id} className="border-b border-slate-100 hover:bg-slate-50">
-                          <td className="px-4 py-3 text-slate-700 font-medium">{user.name}</td>
-                          <td className="px-4 py-3 text-slate-500">{user.email}</td>
-                          <td className="px-4 py-3 text-xs text-slate-400">{new Date(user.created_at).toLocaleDateString()}</td>
-                          <td className="px-4 py-3">
-                            <button onClick={() => handleDeleteUser(user.id, 'organizer')} className="text-red-400 hover:text-red-500 text-xs font-medium">Delete</button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Members Section */}
-            <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-              <div className="flex items-center gap-3 mb-6">
-                <h2 className="text-2xl font-bold text-slate-700">Members</h2>
-                <span className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-50 to-blue-50 px-3 py-1 text-sm font-medium text-blue-600">
-                  {members.length}
-                </span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200">
-                      <th className="px-4 py-3 text-left font-medium text-slate-400">Name</th>
-                      <th className="px-4 py-3 text-left font-medium text-slate-400">Email</th>
-                      <th className="px-4 py-3 text-left font-medium text-slate-400">Created</th>
-                      <th className="px-4 py-3 text-left font-medium text-slate-400">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {members.length === 0 ? (
-                      <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-400">No members registered yet.</td></tr>
-                    ) : (
-                      members.map((user) => (
-                        <tr key={user.id} className="border-b border-slate-100 hover:bg-slate-50">
-                          <td className="px-4 py-3 text-slate-700 font-medium">{user.name}</td>
-                          <td className="px-4 py-3 text-slate-500">{user.email}</td>
-                          <td className="px-4 py-3 text-xs text-slate-400">{new Date(user.created_at).toLocaleDateString()}</td>
-                          <td className="px-4 py-3">
-                            <button onClick={() => handleDeleteUser(user.id, 'member')} className="text-red-400 hover:text-red-500 text-xs font-medium">Delete</button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ===== ACTIVITY TAB ===== */}
-        {activeTab === 'activity' && (
-          <div className="mt-6 rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-            <h2 className="text-2xl font-bold text-slate-700">Platform Activity Log</h2>
-            <div className="mt-6 space-y-2">
-              {activities.length === 0 ? (
-                <p className="text-slate-400">No activity recorded yet.</p>
-              ) : (
-                activities.map((activity: any) => (
-                  <div key={activity.id} className="flex items-start gap-3 rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
-                    <div className="mt-0.5 h-2 w-2 rounded-full bg-orange-500 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-slate-600">
-                        <span className="font-semibold text-slate-700">{activity.user_name || 'System'}</span>
-                        {' '}
-                        <span className="text-slate-400 capitalize">{activity.action.replace(/_/g, ' ')}</span>
-                        {activity.description && <span className="text-slate-400"> — {activity.description}</span>}
-                      </p>
-                      <p className="mt-0.5 text-xs text-slate-400">{new Date(activity.created_at).toLocaleString()}</p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
+          )}
         </div>
       </section>
+
+      <ConfirmModal
+        isOpen={!!deleteTarget}
+        title="Delete User"
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={handleDeleteUser}
+        onClose={() => setDeleteTarget(null)}
+      />
+      <ConfirmModal
+        isOpen={!!deleteCommunityTarget}
+        title="Delete Community"
+        message={`Are you sure you want to delete "${deleteCommunityTarget?.name}"? All events under this community will also be deleted. This action cannot be undone.`}
+        confirmLabel="Delete Community"
+        variant="danger"
+        onConfirm={handleDeleteCommunity}
+        onClose={() => setDeleteCommunityTarget(null)}
+      />
+      <ConfirmModal
+        isOpen={!!deleteEventTarget}
+        title="Delete Event"
+        message={`Are you sure you want to delete "${deleteEventTarget?.title}"? This action cannot be undone.`}
+        confirmLabel="Delete Event"
+        variant="danger"
+        onConfirm={handleDeleteEvent}
+        onClose={() => setDeleteEventTarget(null)}
+      />
+      <Chatbot />
     </main>
   );
 }

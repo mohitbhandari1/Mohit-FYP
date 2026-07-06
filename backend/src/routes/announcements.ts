@@ -10,7 +10,7 @@ router.get('/:communityId', async (req, res, next) => {
   try {
     const result = await query(
       `SELECT a.id, a.title, a.content, a.created_at, a.updated_at,
-              u.id as author_id, u.name as author_name
+              u.id as author_id, u.name as author_name, u.avatar_url as author_avatar
        FROM announcements a
        JOIN users u ON a.created_by = u.id
        WHERE a.community_id = $1
@@ -23,7 +23,7 @@ router.get('/:communityId', async (req, res, next) => {
   }
 });
 
-// POST /api/announcements/:communityId - Create announcement (organizer only)
+// POST /api/announcements/:communityId - Create announcement (owner only)
 router.post('/:communityId', authMiddleware, async (req: AuthRequest, res, next) => {
   const communityId = Number(req.params.communityId);
   const { title, content } = req.body;
@@ -33,9 +33,12 @@ router.post('/:communityId', authMiddleware, async (req: AuthRequest, res, next)
   }
 
   try {
-    // Verify user owns this community
-    const community = await query('SELECT owner_id FROM communities WHERE id = $1', [communityId]);
-    if (community.rows.length === 0 || community.rows[0].owner_id !== req.userId) {
+    // Verify user owns this community (or is admin)
+    const community = await query('SELECT owner_id, name FROM communities WHERE id = $1', [communityId]);
+    if (community.rows.length === 0) {
+      return res.status(404).json({ error: 'Community not found' });
+    }
+    if (community.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
       return res.status(403).json({ error: 'Only the community owner can post announcements' });
     }
 
@@ -45,9 +48,10 @@ router.post('/:communityId', authMiddleware, async (req: AuthRequest, res, next)
     );
 
     // Log activity
+    const user = await query('SELECT name FROM users WHERE id = $1', [req.userId]);
     await query(
       'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
-      [req.userId, '', 'announcement_created', `Posted announcement "${title}" in community #${communityId}`]
+      [req.userId, user.rows[0]?.name || '', 'announcement_created', `Posted announcement "${title}" in ${community.rows[0].name}`]
     );
 
     res.status(201).json(result.rows[0]);
@@ -64,12 +68,17 @@ router.put('/:communityId/:announcementId', authMiddleware, async (req: AuthRequ
 
   try {
     const community = await query('SELECT owner_id FROM communities WHERE id = $1', [communityId]);
-    if (community.rows.length === 0 || community.rows[0].owner_id !== req.userId) {
+    if (community.rows.length === 0) {
+      return res.status(404).json({ error: 'Community not found' });
+    }
+    if (community.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
       return res.status(403).json({ error: 'Not authorized' });
     }
 
     const result = await query(
-      'UPDATE announcements SET title = COALESCE($1, title), content = COALESCE($2, content), updated_at = NOW() WHERE id = $3 AND community_id = $4 RETURNING id, title, content, updated_at',
+      `UPDATE announcements SET title = COALESCE($1, title), content = COALESCE($2, content), updated_at = NOW()
+       WHERE id = $3 AND community_id = $4
+       RETURNING id, title, content, updated_at`,
       [title || null, content || null, announcementId, communityId]
     );
 
@@ -89,11 +98,22 @@ router.delete('/:communityId/:announcementId', authMiddleware, async (req: AuthR
 
   try {
     const community = await query('SELECT owner_id FROM communities WHERE id = $1', [communityId]);
-    if (community.rows.length === 0 || community.rows[0].owner_id !== req.userId) {
+    if (community.rows.length === 0) {
+      return res.status(404).json({ error: 'Community not found' });
+    }
+    if (community.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
       return res.status(403).json({ error: 'Not authorized' });
     }
 
-    await query('DELETE FROM announcements WHERE id = $1 AND community_id = $2', [announcementId, communityId]);
+    const result = await query(
+      'DELETE FROM announcements WHERE id = $1 AND community_id = $2 RETURNING id',
+      [announcementId, communityId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Announcement not found' });
+    }
+
     res.json({ message: 'Announcement deleted' });
   } catch (error) {
     next(error);

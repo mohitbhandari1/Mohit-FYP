@@ -1,153 +1,276 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { apiFetch } from '../lib/auth';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/AuthContext';
+import { apiFetch, BACKEND_URL } from '../lib/auth';
 
-interface Props {
-  communityId: number;
-  isAuthenticated: boolean;
-  communityOwnerId?: number;
+interface DiscussionMessage {
+  id: number;
+  user_id: number;
+  user_name: string;
+  user_avatar?: string;
+  content: string;
+  parent_id?: number | null;
+  created_at: string;
+  replies?: DiscussionMessage[];
 }
 
-export default function Discussions({ communityId, isAuthenticated, communityOwnerId }: Props) {
-  const [discussions, setDiscussions] = useState<any[]>([]);
+interface DiscussionsProps {
+  communityId: number;
+  isAuthenticated?: boolean;
+  communityOwnerId?: number;
+  className?: string;
+}
+
+export default function Discussions({ communityId, isAuthenticated: isAuthProp, communityOwnerId, className = '' }: DiscussionsProps) {
+  const { user, isAuthenticated: authCtx } = useAuth();
+  const isAuth = isAuthProp ?? authCtx;
+  const [messages, setMessages] = useState<DiscussionMessage[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [replyTo, setReplyTo] = useState<DiscussionMessage | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [newContent, setNewContent] = useState('');
-  const [replyTo, setReplyTo] = useState<number | null>(null);
-  const [replyContent, setReplyContent] = useState('');
-  const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    apiFetch(`/api/discussions/${communityId}`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setDiscussions(data || []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    fetchMessages();
   }, [communityId]);
 
-  const handlePostDiscussion = async (e: React.FormEvent) => {
+  const fetchMessages = async () => {
+    try {
+      const res = await apiFetch(`/api/communities/${communityId}/discussions`);
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data.discussions || data || []);
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
-    setError('');
-    try {
-      const res = await apiFetch(`/api/discussions/${communityId}`, { method: 'POST', body: JSON.stringify({ content: newContent }) });
-      if (!res.ok) { const data = await res.json(); setError(data.error || 'Failed to post'); return; }
-      const newDiscussion = await res.json();
-      const meRes = await apiFetch('/api/auth/me');
-      if (meRes.ok) { const me = await meRes.json(); newDiscussion.author_name = me.name; newDiscussion.author_id = me.id; }
-      newDiscussion.replies = [];
-      setDiscussions([newDiscussion, ...discussions]);
-      setNewContent('');
-      setShowForm(false);
-    } catch (err) { setError('An error occurred'); }
-    finally { setSubmitting(false); }
-  };
+    if (!newMessage.trim() || submitting) return;
 
-  const handleReply = async (discussionId: number) => {
-    if (!replyContent.trim()) return;
     setSubmitting(true);
     try {
-      const res = await apiFetch(`/api/discussions/${communityId}`, { method: 'POST', body: JSON.stringify({ content: replyContent, parent_id: discussionId }) });
-      if (!res.ok) { const data = await res.json(); setError(data.error || 'Failed to reply'); return; }
-      const reply = await res.json();
-      const meRes = await apiFetch('/api/auth/me');
-      if (meRes.ok) { const me = await meRes.json(); reply.author_name = me.name; reply.author_id = me.id; }
-      setDiscussions(discussions.map((d) => d.id === discussionId ? { ...d, replies: [...(d.replies || []), reply] } : d));
-      setReplyContent('');
-      setReplyTo(null);
-    } catch (err) { setError('An error occurred'); }
-    finally { setSubmitting(false); }
+      const res = await apiFetch(`/api/communities/${communityId}/discussions`, {
+        method: 'POST',
+        body: JSON.stringify({
+          content: newMessage.trim(),
+          parent_id: replyTo?.id || null,
+        }),
+      });
+
+      if (res.ok) {
+        setNewMessage('');
+        setReplyTo(null);
+        fetchMessages();
+      }
+    } catch {
+      // Handle error
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleDelete = async (discussionId: number) => {
-    if (!confirm('Delete this post?')) return;
-    try {
-      const res = await apiFetch(`/api/discussions/${communityId}/${discussionId}`, { method: 'DELETE' });
-      if (res.ok) setDiscussions(discussions.filter((d) => d.id !== discussionId));
-    } catch (err) {}
+  const formatTime = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    if (days < 7) return `${days}d ago`;
+    return date.toLocaleDateString();
   };
 
-  const { user: currentUser } = useAuth();
-  const canDelete = (authorId: number) => authorId === currentUser?.id || currentUser?.is_admin || currentUser?.id === communityOwnerId;
+  // Organize messages into threads
+  const topLevelMessages = messages.filter((m) => !m.parent_id);
+  const getReplies = (parentId: number) => messages.filter((m) => m.parent_id === parentId);
 
-  if (loading) return <div className="h-20 animate-pulse rounded-xl bg-slate-200" />;
+  if (loading) {
+    return (
+      <div className={`space-y-4 ${className}`}>
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="rounded-xl border border-white/5 bg-white/[0.02] p-4 animate-pulse">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-8 h-8 rounded-full bg-slate-800/50" />
+              <div className="h-3 w-24 rounded bg-slate-800/50" />
+            </div>
+            <div className="h-4 w-3/4 rounded bg-slate-800/50" />
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-slate-700">💬 Discussions</h2>
-        {isAuthenticated && (
-          <button onClick={() => setShowForm(!showForm)}
-            className="rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:shadow-md hover:scale-[1.02]">
-            {showForm ? 'Cancel' : '+ New Post'}
-          </button>
-        )}
-      </div>
+    <div className={`space-y-6 ${className}`}>
+      {/* New message form */}
+      {isAuth && (
+        <form onSubmit={handleSubmit} className="rounded-xl border border-white/10 bg-white/[0.02] backdrop-blur-xl p-4">
+          {replyTo && (
+            <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/20">
+              <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+              </svg>
+              <p className="text-xs text-slate-400 truncate flex-1">
+                Replying to <span className="text-amber-400 font-medium">{replyTo.user_name}</span>
+              </p>
+              <button
+                type="button"
+                onClick={() => setReplyTo(null)}
+                className="text-slate-500 hover:text-white transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
 
-      {error && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>}
-
-      {showForm && (
-        <form onSubmit={handlePostDiscussion} className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-white p-4">
-          <textarea placeholder="Start a discussion..." value={newContent} onChange={(e) => setNewContent(e.target.value)} required rows={3}
-            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-slate-800 placeholder-slate-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20" />
-          <button type="submit" disabled={submitting}
-            className="w-full rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-2 font-semibold text-white shadow-sm transition-all hover:shadow-md hover:scale-[1.02] disabled:opacity-50">
-            {submitting ? 'Posting...' : 'Post'}
-          </button>
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center text-xs font-bold text-white shrink-0">
+              {user?.avatar_url ? (
+                <img src={user.avatar_url.startsWith('http') ? user.avatar_url : `${BACKEND_URL}${user.avatar_url}`} alt="" className="w-full h-full rounded-full object-cover" />
+              ) : (
+                user?.name?.charAt(0).toUpperCase()
+              )}
+            </div>
+            <div className="flex-1">
+              <textarea
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Start a discussion..."
+                rows={2}
+                className="w-full px-4 py-3 rounded-xl bg-slate-800/50 border border-slate-700/50 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20 transition-all resize-none"
+              />
+              <div className="flex justify-end mt-2">
+                <button
+                  type="submit"
+                  disabled={!newMessage.trim() || submitting}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 hover:scale-105 disabled:opacity-40 disabled:hover:scale-100 transition-all duration-200"
+                >
+                  {submitting ? 'Posting...' : replyTo ? 'Reply' : 'Post'}
+                </button>
+              </div>
+            </div>
+          </div>
         </form>
       )}
 
-      <div className="mt-6 space-y-4">
-        {discussions.length === 0 ? (
-          <p className="text-sm text-slate-400">No discussions yet. Be the first to start one!</p>
-        ) : (
-          discussions.map((discussion) => (
-            <div key={discussion.id} className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <p className="text-sm text-slate-700">{discussion.content}</p>
-                  <p className="mt-1 text-xs text-slate-400">{discussion.author_name} • {new Date(discussion.created_at).toLocaleDateString()}</p>
-                </div>
-                {canDelete(discussion.author_id) && (
-                  <button onClick={() => handleDelete(discussion.id)} className="text-xs text-red-400 hover:text-red-500 ml-2 shrink-0">Delete</button>
+      {/* Messages */}
+      {topLevelMessages.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="w-16 h-16 rounded-full bg-slate-800/50 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+          </div>
+          <p className="text-slate-500 text-sm">No discussions yet. Start the conversation!</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {topLevelMessages.map((msg) => (
+            <MessageCard
+              key={msg.id}
+              message={msg}
+              replies={getReplies(msg.id)}
+              onReply={setReplyTo}
+              formatTime={formatTime}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MessageCard({
+  message,
+  replies,
+  onReply,
+  formatTime,
+}: {
+  message: DiscussionMessage;
+  replies: DiscussionMessage[];
+  onReply: (msg: DiscussionMessage) => void;
+  formatTime: (d: string) => string;
+}) {
+  const [showReplies, setShowReplies] = useState(replies.length <= 2);
+
+  return (
+    <div className="rounded-xl border border-white/5 bg-white/[0.02] backdrop-blur-xl overflow-hidden hover:border-white/10 transition-all duration-200">
+      <div className="p-4">
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500/80 to-orange-500/80 flex items-center justify-center text-xs font-bold text-white overflow-hidden">
+            {message.user_avatar ? (
+              <img src={message.user_avatar.startsWith('http') ? message.user_avatar : `${BACKEND_URL}${message.user_avatar}`} alt="" className="w-full h-full object-cover" />
+            ) : (
+              message.user_name?.charAt(0).toUpperCase()
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-white truncate">{message.user_name}</p>
+            <p className="text-xs text-slate-500">{formatTime(message.created_at)}</p>
+          </div>
+        </div>
+
+        {/* Content */}
+        <p className="text-sm text-slate-300 leading-relaxed pl-11">{message.content}</p>
+
+        {/* Actions */}
+        <div className="flex items-center gap-3 mt-3 pl-11">
+          <button
+            onClick={() => onReply(message)}
+            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-amber-400 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+            </svg>
+            Reply
+          </button>
+          {replies.length > 0 && (
+            <button
+              onClick={() => setShowReplies(!showReplies)}
+              className="text-xs text-slate-500 hover:text-amber-400 transition-colors"
+            >
+              {showReplies ? 'Hide' : `Show ${replies.length}`} {replies.length === 1 ? 'reply' : 'replies'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Replies */}
+      {showReplies && replies.length > 0 && (
+        <div className="border-t border-slate-800/40 bg-slate-900/30 px-4 py-3 space-y-3">
+          {replies.map((reply) => (
+            <div key={reply.id} className="flex items-start gap-3 pl-4 border-l-2 border-amber-500/20">
+              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-orange-500/60 to-amber-500/60 flex items-center justify-center text-[10px] font-bold text-white shrink-0 overflow-hidden">
+                {reply.user_avatar ? (
+                  <img src={reply.user_avatar.startsWith('http') ? reply.user_avatar : `${BACKEND_URL}${reply.user_avatar}`} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  reply.user_name?.charAt(0).toUpperCase()
                 )}
               </div>
-
-              {discussion.replies && discussion.replies.length > 0 && (
-                <div className="mt-3 ml-6 space-y-2 border-l-2 border-orange-200 pl-4">
-                  {discussion.replies.map((reply: any) => (
-                    <div key={reply.id} className="py-2">
-                      <p className="text-sm text-slate-600">{reply.content}</p>
-                      <p className="mt-0.5 text-xs text-slate-400">{reply.author_name} replied • {new Date(reply.created_at).toLocaleDateString()}</p>
-                    </div>
-                  ))}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-white">{reply.user_name}</span>
+                  <span className="text-[10px] text-slate-600">{formatTime(reply.created_at)}</span>
                 </div>
-              )}
-
-              {isAuthenticated && (
-                <div className="mt-3">
-                  {replyTo === discussion.id ? (
-                    <div className="flex gap-2">
-                      <input type="text" placeholder="Write a reply..." value={replyContent} onChange={(e) => setReplyContent(e.target.value)}
-                        className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-800 placeholder-slate-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20" />
-                      <button onClick={() => handleReply(discussion.id)} disabled={submitting}
-                        className="rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-all hover:shadow-md disabled:opacity-50">
-                        Reply
-                      </button>
-                      <button onClick={() => { setReplyTo(null); setReplyContent(''); }} className="text-xs text-slate-400 hover:text-slate-500">Cancel</button>
-                    </div>
-                  ) : (
-                    <button onClick={() => setReplyTo(discussion.id)} className="text-xs font-medium text-orange-600 hover:text-orange-500">Reply</button>
-                  )}
-                </div>
-              )}
+                <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{reply.content}</p>
+              </div>
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

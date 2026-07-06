@@ -200,16 +200,99 @@ const uploadAvatar = multer({
   },
 });
 
+// ─── Banner Upload Setup ───
+const bannerStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    const dir = path.join(__dirname, '../../uploads/banners');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, `banner-${uniqueSuffix}${ext}`);
+  },
+});
+
+const uploadBanner = multer({
+  storage: bannerStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only JPEG, PNG, GIF, and WebP images are allowed'));
+    }
+  },
+});
+
+// POST /api/auth/banner - Upload profile banner/cover
+router.post('/banner', authMiddleware, uploadBanner.single('banner'), async (req: AuthRequest, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const bannerUrl = '/uploads/banners/' + req.file.filename;
+
+    // Delete old banner file if exists
+    const oldUser = await query('SELECT banner_image FROM users WHERE id = $1', [req.userId]);
+    if (oldUser.rows.length > 0 && oldUser.rows[0].banner_image) {
+      const oldPath = path.join(__dirname, '../..', oldUser.rows[0].banner_image);
+      if (fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
+      }
+    }
+
+    const result = await query(
+      'UPDATE users SET banner_image = $1 WHERE id = $2 RETURNING id, banner_image',
+      [bannerUrl, req.userId]
+    );
+
+    res.json({ banner_image: result.rows[0].banner_image });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/auth/banner - Remove profile banner
+router.delete('/banner', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    const user = await query('SELECT banner_image FROM users WHERE id = $1', [req.userId]);
+    if (user.rows.length > 0 && user.rows[0].banner_image) {
+      const oldPath = path.join(__dirname, '../..', user.rows[0].banner_image);
+      if (fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
+      }
+    }
+
+    await query('UPDATE users SET banner_image = NULL WHERE id = $1', [req.userId]);
+    res.json({ message: 'Banner removed' });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/me', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     const result = await query(
-      'SELECT id, name, email, role, interests, bio, is_admin, avatar_url, created_at FROM users WHERE id = $1',
+      'SELECT id, name, email, role, interests, bio, is_admin, avatar_url, banner_image, created_at FROM users WHERE id = $1',
       [req.userId]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    res.json(result.rows[0]);
+    const user = result.rows[0];
+    // Check if user owns any communities
+    const ownedResult = await query(
+      'SELECT COUNT(*) as count FROM communities WHERE owner_id = $1',
+      [req.userId]
+    );
+    user.owns_community = parseInt(ownedResult.rows[0].count) > 0;
+    res.json(user);
   } catch (error) {
     next(error);
   }

@@ -1,217 +1,440 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import Navbar from '../../components/Navbar';
+import Chatbot from '../../components/Chatbot';
 import Announcements from '../../components/Announcements';
 import Discussions from '../../components/Discussions';
-import { apiFetch } from '../../lib/auth';
+import SharePopup from '../../components/SharePopup';
+import { apiFetch, BACKEND_URL } from '../../lib/auth';
 import { useAuth } from '../../lib/AuthContext';
+import { useToast } from '../../components/Toast';
+import { SkeletonDetailPage } from '../../components/Skeleton';
+
+type Tab = 'about' | 'events' | 'reviews' | 'discussions' | 'announcements';
 
 export default function CommunityDetailPage() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
+  const { user, isAuthenticated } = useAuth();
+
   const [community, setCommunity] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [reviews, setReviews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [user, setUser] = useState<any>(null);
   const [isMember, setIsMember] = useState(false);
-  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>('about');
+  const [joining, setJoining] = useState(false);
+  const [showSharePopup, setShowSharePopup] = useState(false);
   const [reviewForm, setReviewForm] = useState({ rating: 5, comment: '' });
-  const [submitting, setSubmitting] = useState(false);
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [hoverRating, setHoverRating] = useState(0);
+  const { addToast } = useToast();
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const [communityRes, eventsRes, reviewsRes] = await Promise.all([
           apiFetch(`/api/communities/${id}`),
-          apiFetch(`/api/events?communityId=${id}`),
+          apiFetch(`/api/communities/${id}/events`),
           apiFetch(`/api/engagement/review/community/${id}`),
         ]);
-        if (communityRes.ok) { const communityData = await communityRes.json(); setCommunity(communityData); }
-        if (eventsRes.ok) { const eventsData = await eventsRes.json(); setEvents(eventsData); }
-        if (reviewsRes.ok) { const reviewsData = await reviewsRes.json(); setReviews(reviewsData); }
-        const meRes = await apiFetch('/api/auth/me');
-        if (meRes.ok) {
-          const meData = await meRes.json();
-          setIsAuthenticated(true); setUser(meData);
-          const memberRes = await apiFetch(`/api/engagement/community/is-member/${id}`);
-          if (memberRes.ok) { const memberData = await memberRes.json(); setIsMember(memberData.isMember); }
+        if (communityRes.ok) setCommunity(await communityRes.json());
+        if (eventsRes.ok) setEvents(await eventsRes.json());
+        if (reviewsRes.ok) setReviews(await reviewsRes.json());
+
+        if (isAuthenticated) {
+          const memberRes = await apiFetch(`/api/communities/${id}/membership`);
+          if (memberRes.ok) {
+            const memberData = await memberRes.json();
+            setIsMember(memberData.is_member || false);
+          }
         }
-      } catch (err) { console.error('Failed to load community details'); }
-      finally { setLoading(false); }
+      } catch { /* ignore */ }
+      setLoading(false);
     };
     fetchData();
-  }, [id]);
+  }, [id, isAuthenticated]);
 
-  const handleJoinToggle = async () => {
-    const meRes = await apiFetch('/api/auth/me');
-    if (!meRes.ok) { router.push('/login'); return; }
+  const handleJoinLeave = async () => {
+    if (!isAuthenticated) { router.push('/login'); return; }
+    setJoining(true);
     try {
-      const res = await apiFetch(`/api/engagement/community/join/${id}`, { method: 'POST' });
-      if (res.ok) { setIsMember(true); setCommunity((prev: any) => ({ ...prev, member_count: (prev.member_count || 0) + 1 })); }
-    } catch (err) { console.error('Failed to join community'); }
+      const endpoint = isMember
+        ? `/api/communities/${id}/leave`
+        : `/api/communities/${id}/join`;
+      const res = await apiFetch(endpoint, { method: 'POST' });
+      if (res.ok) {
+        setIsMember(!isMember);
+        setCommunity((prev: any) => prev ? {
+          ...prev,
+          member_count: (prev.member_count || 0) + (isMember ? -1 : 1)
+        } : prev);
+        if (isMember) {
+          addToast('info', 'You have left the community');
+        } else {
+          addToast('success', 'You have successfully joined this Community');
+        }
+      }
+    } catch { /* ignore */ }
+    setJoining(false);
   };
 
-  const handleAddReview = async (e: React.FormEvent) => {
+  const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
+    if (!isAuthenticated) return;
+    setSubmittingReview(true);
     try {
-      const meRes = await apiFetch('/api/auth/me');
-      if (!meRes.ok) { router.push('/login'); return; }
-      const res = await apiFetch('/api/engagement/review', { method: 'POST', body: JSON.stringify({ community_id: parseInt(id), rating: reviewForm.rating, comment: reviewForm.comment }) });
-      if (res.ok) { const newReview = await res.json(); setReviews([...reviews, newReview]); setReviewForm({ rating: 5, comment: '' }); setShowReviewForm(false); }
-    } catch (err) { console.error('Failed to add review'); }
-    finally { setSubmitting(false); }
+      const res = await apiFetch(`/api/engagement/review/community/${id}`, {
+        method: 'POST',
+        body: JSON.stringify(reviewForm),
+      });
+      if (res.ok) {
+        const newReview = await res.json();
+        setReviews((prev) => [newReview, ...prev]);
+        setReviewForm({ rating: 5, comment: '' });
+        setShowReviewForm(false);
+      }
+    } catch { /* ignore */ }
+    setSubmittingReview(false);
   };
 
-  if (loading) return <div className="min-h-screen" />;
+  if (loading) {
+    return (
+      <>
+        <Navbar />
+        <main className="min-h-screen pt-24 pb-16 px-4">
+          <SkeletonDetailPage />
+        </main>
+      </>
+    );
+  }
+
+  if (!community) {
+    return (
+      <>
+        <Navbar />
+        <main className="min-h-screen pt-24 pb-16 px-4 flex items-center justify-center">
+          <div className="text-center glass rounded-2xl p-10">
+            <div className="text-5xl mb-4">😕</div>
+            <h2 className="text-xl font-bold text-slate-100 mb-2">Community not found</h2>
+            <p className="text-slate-400 mb-6">This community may have been removed.</p>
+            <Link href="/communities" className="btn-primary px-6 py-2.5 rounded-xl text-sm">
+              Back to Communities
+            </Link>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'about', label: 'About' },
+    { id: 'events', label: 'Events' },
+    { id: 'reviews', label: 'Reviews' },
+    { id: 'discussions', label: 'Discussions' },
+    { id: 'announcements', label: 'Announcements' },
+  ];
+
+  const avgRating = reviews.length > 0
+    ? (reviews.reduce((sum, r) => sum + (r.rating || 0), 0) / reviews.length).toFixed(1)
+    : null;
 
   return (
-    <main className="min-h-screen">
+    <>
       <Navbar />
-      <section className="mx-auto max-w-6xl px-6 py-16 sm:px-8">
-        <div className="animate-fade-in-up rounded-2xl border border-slate-200 bg-white/90 p-8 shadow-lg">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h1 className="text-4xl font-bold text-slate-800">{community?.name}</h1>
-              <div className="mt-2 flex flex-wrap items-center gap-3">
-                <span className="rounded-full bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-1 text-sm font-medium text-orange-600">
-                  {community?.category || 'General'}
-                </span>
-                <span className="flex items-center gap-1 text-sm text-slate-400">
-                  <span className="h-2 w-2 rounded-full bg-orange-400" />
-                  {community?.member_count || 0} members
-                </span>
-              </div>
+      <main className="min-h-screen pt-24 pb-16 px-4">
+        <div className="fixed inset-0 pointer-events-none -z-10">
+          <div className="glow-orb glow-orb-amber w-[500px] h-[500px] -top-40 right-0 opacity-10" />
+          <div className="glow-orb glow-orb-orange w-[300px] h-[300px] bottom-20 -left-10 opacity-10" />
+        </div>
+
+        <div className="max-w-4xl mx-auto">
+          {/* Hero banner */}
+          <div className="relative rounded-3xl overflow-hidden mb-8 opacity-0 animate-fade-in-up animate-fill-both">
+            <div className="aspect-video bg-gradient-to-br from-orange-900/40 to-amber-900/20">
+              {community.banner_image && (
+                <img src={`${BACKEND_URL}${community.banner_image}`} alt={community.name} className="w-full h-full object-cover" />
+              )}
+              {!community.banner_image && community.logo && (
+                <div className="w-full h-full flex items-center justify-center p-6">
+                  <img src={`${BACKEND_URL}${community.logo}`} alt={community.name} className="max-h-full max-w-full object-contain opacity-40" />
+                </div>
+              )}
             </div>
-            <div className="flex gap-2 flex-wrap">
-              {isAuthenticated && !isMember && user?.id !== community?.owner_id && (
-                <button onClick={handleJoinToggle}
-                  className="rounded-full bg-gradient-to-r from-orange-500 to-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:shadow-md hover:scale-[1.02]">
-                  + Join Community
-                </button>
-              )}
-              {isMember && (
-                <span className="inline-flex items-center rounded-full border-2 border-orange-200 bg-orange-50 px-5 py-2 text-sm font-medium text-orange-600">
-                  ✓ Member
-                </span>
-              )}
-              {isAuthenticated && user?.id === community?.owner_id && (
-                <Link href={`/communities/${id}/edit`}
-                  className="rounded-full border-2 border-orange-200 bg-orange-50 px-5 py-2 text-sm font-medium text-orange-600 transition-all hover:bg-orange-100">
-                  Edit
-                </Link>
-              )}
-              <Link href="/communities"
-                className="rounded-full border-2 border-slate-200 bg-white px-5 py-2 text-sm font-medium text-slate-600 transition-all hover:border-slate-300 hover:text-slate-700">
-                Back
-              </Link>
+            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/30 to-transparent" />
+            <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8">
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  {community.category && (
+                    <span className="inline-block px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/20 text-xs font-medium text-orange-300 mb-3">
+                      {community.category}
+                    </span>
+                  )}
+                  <h1 className="text-2xl sm:text-3xl font-bold text-slate-100">{community.name}</h1>
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => setShowSharePopup(true)}
+                    className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 transition-all"
+                    aria-label="Share"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="mt-8 space-y-6">
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-bold text-slate-700">About this community</h2>
-              <p className="mt-4 text-slate-600">{community?.description}</p>
-              {community?.website && (
-                <p className="mt-4 text-sm">
-                  Website:{' '}
-                  <a href={community.website} target="_blank" rel="noreferrer" className="font-medium text-orange-600 hover:text-orange-500">{community.website}</a>
+          {/* Info + Join bar */}
+          <div className="glass rounded-2xl p-5 mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 opacity-0 animate-fade-in-up animate-fill-both animate-delay-100">
+            <div className="flex flex-wrap items-center gap-4 text-sm text-slate-400">
+              <span className="flex items-center gap-1.5">
+                <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+                </svg>
+                {community.member_count || 0} members
+              </span>
+              {avgRating && (
+                <span className="flex items-center gap-1.5">
+                  <svg className="w-4 h-4 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                  {avgRating} ({reviews.length})
+                </span>
+              )}
+              {community.website && (
+                <a href={community.website} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.172 13.828a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.102 1.101" />
+                  </svg>
+                  Website
+                </a>
+              )}
+            </div>
+            <button
+              onClick={handleJoinLeave}
+              disabled={joining}
+              className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-50 ${
+                isMember
+                  ? 'border border-red-500/20 bg-red-500/5 text-red-400 hover:bg-red-500/10'
+                  : 'btn-primary'
+              }`}
+            >
+              {joining ? 'Processing...' : isMember ? 'Leave Community' : 'Join Community'}
+            </button>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/5 mb-8 overflow-x-auto opacity-0 animate-fade-in-up animate-fill-both animate-delay-200">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex-1 min-w-fit px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  activeTab === tab.id
+                    ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                    : 'text-slate-400 hover:text-slate-200 border border-transparent'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab Content */}
+          <div className="opacity-0 animate-fade-in-up animate-fill-both animate-delay-300">
+            {activeTab === 'about' && (
+              <div className="glass rounded-2xl p-6 sm:p-8">
+                <h2 className="text-xl font-semibold text-slate-100 mb-4">About</h2>
+                <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">
+                  {community.description || 'No description provided.'}
                 </p>
-              )}
-            </div>
+              </div>
+            )}
 
-            <Announcements communityId={community?.id} isOwner={user?.id === community?.owner_id} />
-
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-bold text-slate-700">Upcoming events</h2>
-              <div className="mt-4 space-y-4">
-                {events.length > 0 ? (
-                  events.map((event: any) => (
-                    <article key={event.id} className="card-hover rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-                      <h3 className="text-lg font-bold text-slate-700">{event.title}</h3>
-                      <p className="mt-2 text-slate-500">{event.description}</p>
-                      <div className="mt-3 flex flex-wrap gap-2 text-sm">
-                        <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-3 py-1 font-medium text-orange-600">
-                          📅 {new Date(event.event_date).toLocaleDateString()}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1 font-medium text-amber-600">
-                          📍 {event.location || 'Online'}
-                        </span>
-                      </div>
-                    </article>
-                  ))
+            {activeTab === 'events' && (
+              <div className="space-y-4">
+                {events.length === 0 ? (
+                  <div className="glass rounded-2xl p-10 text-center">
+                    <div className="text-4xl mb-3">📅</div>
+                    <p className="text-slate-400">No events for this community yet.</p>
+                  </div>
                 ) : (
-                  <p className="text-slate-400">No upcoming events for this community yet.</p>
-                )}
-              </div>
-            </div>
-
-            <Discussions communityId={community?.id} isAuthenticated={isAuthenticated} communityOwnerId={community?.owner_id} />
-
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-slate-700">Reviews</h2>
-                {isAuthenticated && (
-                  <button onClick={() => setShowReviewForm(!showReviewForm)}
-                    className="rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:shadow-md hover:scale-[1.02]">
-                    {showReviewForm ? 'Cancel' : '+ Add Review'}
-                  </button>
-                )}
-              </div>
-
-              {showReviewForm && (
-                <form onSubmit={handleAddReview} className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-white p-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-600">Rating</label>
-                    <select value={reviewForm.rating} onChange={(e) => setReviewForm({ ...reviewForm, rating: parseInt(e.target.value) })}
-                      className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-slate-800 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20">
-                      <option value={5}>5 - Excellent</option><option value={4}>4 - Good</option>
-                      <option value={3}>3 - Average</option><option value={2}>2 - Poor</option><option value={1}>1 - Very Poor</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-600">Comment</label>
-                    <textarea value={reviewForm.comment} onChange={(e) => setReviewForm({ ...reviewForm, comment: e.target.value })} required rows={3}
-                      className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-slate-800 placeholder-slate-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20" />
-                  </div>
-                  <button type="submit" disabled={submitting}
-                    className="w-full rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-2 font-semibold text-white shadow-sm transition-all hover:shadow-md hover:scale-[1.02] disabled:opacity-50">
-                    {submitting ? 'Posting...' : 'Post Review'}
-                  </button>
-                </form>
-              )}
-
-              <div className="mt-6 space-y-4">
-                {reviews.length > 0 ? (
-                  reviews.map((review: any) => (
-                    <div key={review.id} className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-semibold text-slate-700">{review.name || review.user_name}</p>
-                          <p className="text-sm text-slate-400">{new Date(review.created_at).toLocaleDateString()}</p>
-                        </div>
-                        <div className="flex">
-                          {Array.from({ length: review.rating }).map((_, i) => (<span key={i} className="text-yellow-400">★</span>))}
-                          {Array.from({ length: 5 - review.rating }).map((_, i) => (<span key={`e-${i}`} className="text-slate-300">★</span>))}
-                        </div>
+                  events.map((event) => (
+                    <Link
+                      href={`/events/${event.id}`}
+                      key={event.id}
+                      className="glass-card rounded-2xl p-5 flex items-center gap-4 group"
+                    >
+                      <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-white/5 flex flex-col items-center justify-center flex-shrink-0">
+                        {event.date && (
+                          <>
+                            <span className="text-xs text-amber-400 font-medium">
+                              {new Date(event.date).toLocaleDateString('en-US', { month: 'short' })}
+                            </span>
+                            <span className="text-lg font-bold text-slate-100 leading-none">
+                              {new Date(event.date).getDate()}
+                            </span>
+                          </>
+                        )}
                       </div>
-                      <p className="mt-2 text-slate-600">{review.comment}</p>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-base font-semibold text-slate-100 truncate group-hover:text-amber-300 transition-colors">
+                          {event.title}
+                        </h3>
+                        <p className="text-sm text-slate-400 truncate">{event.location || 'Online'}</p>
+                      </div>
+                      <svg className="w-5 h-5 text-slate-500 group-hover:text-amber-400 transition-colors flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </Link>
+                  ))
+                )}
+              </div>
+            )}
+
+            {activeTab === 'reviews' && (
+              <div className="space-y-6">
+                {/* Write review button */}
+                {isAuthenticated && !showReviewForm && (
+                  <button
+                    onClick={() => setShowReviewForm(true)}
+                    className="btn-primary px-5 py-2.5 rounded-xl text-sm font-medium"
+                  >
+                    Write a Review
+                  </button>
+                )}
+
+                {/* Review form */}
+                {showReviewForm && (
+                  <form onSubmit={handleSubmitReview} className="glass rounded-2xl p-6 space-y-4">
+                    <h3 className="text-base font-semibold text-slate-100">Your Review</h3>
+                    {/* Star rating */}
+                    <div className="flex items-center gap-1">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          type="button"
+                          key={star}
+                          onMouseEnter={() => setHoverRating(star)}
+                          onMouseLeave={() => setHoverRating(0)}
+                          onClick={() => setReviewForm({ ...reviewForm, rating: star })}
+                          className="p-0.5 transition-transform hover:scale-110"
+                          aria-label={`Rate ${star} stars`}
+                        >
+                          <svg
+                            className={`w-7 h-7 ${
+                              star <= (hoverRating || reviewForm.rating)
+                                ? 'text-amber-400'
+                                : 'text-slate-600'
+                            } transition-colors`}
+                            fill="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                          </svg>
+                        </button>
+                      ))}
+                      <span className="ml-2 text-sm text-slate-400">{reviewForm.rating}/5</span>
+                    </div>
+                    {/* Comment */}
+                    <textarea
+                      value={reviewForm.comment}
+                      onChange={(e) => setReviewForm({ ...reviewForm, comment: e.target.value })}
+                      rows={3}
+                      placeholder="Share your experience..."
+                      className="input-glass w-full rounded-xl resize-none"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        type="submit"
+                        disabled={submittingReview}
+                        className="btn-primary px-5 py-2.5 rounded-xl text-sm font-medium disabled:opacity-50"
+                      >
+                        {submittingReview ? 'Submitting...' : 'Submit Review'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowReviewForm(false)}
+                        className="btn-ghost px-5 py-2.5 rounded-xl text-sm"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Reviews list */}
+                {reviews.length === 0 ? (
+                  <div className="glass rounded-2xl p-10 text-center">
+                    <div className="text-4xl mb-3">⭐</div>
+                    <p className="text-slate-400">No reviews yet. Be the first!</p>
+                  </div>
+                ) : (
+                  reviews.map((review, i) => (
+                    <div key={review.id || i} className="glass rounded-2xl p-5">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-white/10 flex items-center justify-center">
+                          <span className="text-sm font-semibold text-amber-300">
+                            {(review.user_name || review.name || 'U').charAt(0).toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-slate-200">{review.user_name || review.name || 'Anonymous'}</p>
+                          <div className="flex items-center gap-1">
+                            {Array.from({ length: 5 }).map((_, j) => (
+                              <svg
+                                key={j}
+                                className={`w-3.5 h-3.5 ${j < (review.rating || 0) ? 'text-amber-400' : 'text-slate-700'}`}
+                                fill="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                              </svg>
+                            ))}
+                          </div>
+                        </div>
+                        {review.created_at && (
+                          <span className="text-xs text-slate-500">
+                            {new Date(review.created_at).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                      {review.comment && (
+                        <p className="text-sm text-slate-300 leading-relaxed">{review.comment}</p>
+                      )}
                     </div>
                   ))
-                ) : (
-                  <p className="text-slate-400">No reviews yet. Be the first to review!</p>
                 )}
               </div>
-            </div>
+            )}
+
+            {activeTab === 'discussions' && (
+              <Discussions communityId={parseInt(id)} />
+            )}
+
+            {activeTab === 'announcements' && (
+              <Announcements communityId={parseInt(id)} />
+            )}
           </div>
         </div>
-      </section>
-    </main>
+
+        {/* Share popup */}
+        <SharePopup
+          isOpen={showSharePopup}
+          url={typeof window !== 'undefined' ? window.location.href : ''}
+          title={community.name}
+          onClose={() => setShowSharePopup(false)}
+        />
+      </main>
+      <Chatbot />
+    </>
   );
 }
