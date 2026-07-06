@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS users (
   bio TEXT,
   avatar_url VARCHAR(500),
   banner_image VARCHAR(500),
+  email_verified BOOLEAN DEFAULT FALSE,
+  verification_token VARCHAR(255),
+  reset_token VARCHAR(255),
+  reset_token_expires TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

@@ -11,7 +11,8 @@
 //      FROM_EMAIL=noreply@your-verified-domain.com
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const FROM_EMAIL = process.env.FROM_EMAIL || 'notifications@smartconnects.com';
+const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 export async function sendEmail(to: string, subject: string, html: string) {
   if (!RESEND_API_KEY) {
@@ -75,31 +76,6 @@ export async function sendEmail(to: string, subject: string, html: string) {
 
 // ─── Email Templates ───
 
-export function welcomeEmail(name: string): { subject: string; html: string } {
-  return {
-    subject: 'Welcome to Smart Connects!',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
-        <h1 style="color: #22d3ee; font-size: 24px; margin-bottom: 20px;">Welcome to Smart Connects!</h1>
-        <p style="font-size: 16px; line-height: 1.6;">Hi <strong>${name}</strong>,</p>
-        <p style="font-size: 16px; line-height: 1.6;">Thank you for joining Smart Connects! You can now:</p>
-        <ul style="font-size: 15px; line-height: 2;">
-          <li>🔍 Browse and join communities</li>
-          <li>📅 RSVP to events</li>
-          <li>💬 Participate in community discussions</li>
-          <li>⭐ Get personalized recommendations</li>
-        </ul>
-        <p style="font-size: 16px; line-height: 1.6;">
-          Ready to get started?
-          <a href="http://localhost:3000/communities" style="color: #22d3ee; text-decoration: underline;">Browse communities</a>
-        </p>
-        <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
-        <p style="font-size: 13px; color: #64748b;">Smart Connects - Community & Event Discovery Platform</p>
-      </div>
-    `,
-  };
-}
-
 export function applicationApprovedEmail(
   name: string,
   communityName: string,
@@ -122,10 +98,70 @@ export function applicationApprovedEmail(
         </div>
         <p style="font-size: 14px; color: #ef4444;">⚠️ You will be required to change this password on your first login.</p>
         <p style="font-size: 16px; line-height: 1.6; margin-top: 20px;">
-          <a href="http://localhost:3000/login" style="display: inline-block; background: #22d3ee; color: #0f172a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;">Log In Now</a>
+          <a href="${FRONTEND_URL}/login" style="display: inline-block; background: #22d3ee; color: #0f172a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;">Log In Now</a>
         </p>
         <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
         <p style="font-size: 13px; color: #64748b;">Smart Connects - Community & Event Discovery Platform</p>
+      </div>
+    `,
+  };
+}
+
+export function verificationEmail(name: string, token: string): { subject: string; html: string } {
+  const verificationLink = `${FRONTEND_URL}/verify-email?token=${token}`;
+  return {
+    subject: 'Verify your email - Smart Connects',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+        <h1 style="color: #22d3ee; font-size: 24px; margin-bottom: 10px;">Welcome to Smart Connects! 🎉</h1>
+        <p style="font-size: 16px; line-height: 1.6;">Hi <strong>${name}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6;">
+          Thanks for creating an account! Please verify your email address by clicking the button below.
+        </p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${verificationLink}" style="display: inline-block; background: #22d3ee; color: #0f172a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px;">
+            Verify Email Address
+          </a>
+        </div>
+        <p style="font-size: 14px; color: #64748b; text-align: center;">
+          Or copy this link into your browser:<br/>
+          <a href="${verificationLink}" style="color: #22d3ee;">${verificationLink}</a>
+        </p>
+        <p style="font-size: 14px; color: #ef4444; text-align: center; margin-top: 20px;">
+          This link expires in 24 hours.
+        </p>
+        <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
+        <p style="font-size: 13px; color: #64748b; text-align: center;">Smart Connects - Community & Event Discovery Platform</p>
+      </div>
+    `,
+  };
+}
+
+export function passwordResetEmail(name: string, token: string): { subject: string; html: string } {
+  const resetLink = `${FRONTEND_URL}/reset-password?token=${token}`;
+  return {
+    subject: 'Reset your password - Smart Connects',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+        <h1 style="color: #f87171; font-size: 24px; margin-bottom: 10px;">Password Reset Request</h1>
+        <p style="font-size: 16px; line-height: 1.6;">Hi <strong>${name}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6;">
+          We received a request to reset your password. Click the button below to set a new one.
+        </p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${resetLink}" style="display: inline-block; background: #f87171; color: #0f172a; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px;">
+            Reset Password
+          </a>
+        </div>
+        <p style="font-size: 14px; color: #64748b; text-align: center;">
+          Or copy this link into your browser:<br/>
+          <a href="${resetLink}" style="color: #f87171;">${resetLink}</a>
+        </p>
+        <p style="font-size: 14px; color: #ef4444; text-align: center; margin-top: 20px;">
+          This link expires in 1 hour. If you didn't request this, you can ignore this email.
+        </p>
+        <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
+        <p style="font-size: 13px; color: #64748b; text-align: center;">Smart Connects - Community & Event Discovery Platform</p>
       </div>
     `,
   };
@@ -154,7 +190,7 @@ export function applicationRejectedEmail(
         }
         <p style="font-size: 16px; line-height: 1.6;">
           You are welcome to submit a new application with updated information.
-          <a href="http://localhost:3000/apply" style="color: #22d3ee; text-decoration: underline;">Submit a new application</a>
+          <a href="${FRONTEND_URL}/apply" style="color: #22d3ee; text-decoration: underline;">Submit a new application</a>
         </p>
         <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
         <p style="font-size: 13px; color: #64748b;">Smart Connects - Community & Event Discovery Platform</p>

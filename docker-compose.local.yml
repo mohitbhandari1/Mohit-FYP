@@ -50,6 +50,9 @@ services:
       PGDATABASE: smart_connects
       JWT_SECRET: smart-connects-local-jwt-secret-2026
       GEMINI_API_KEY: AQ.Ab8RN6L5DLfcbH_XdPftr3AmIEoxaEbBgNsEG1tFXrEFZ7tThQ
+      RESEND_API_KEY: re_ETcfFL5u_KfijmpxPqmTFMfgiY5fR6aQd
+      FROM_EMAIL: onboarding@resend.dev
+      FRONTEND_URL: http://localhost:3000
     depends_on:
       db:
         condition: service_healthy

@@ -1,12 +1,13 @@
 import express from 'express';
 import bcryptjs from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { query } from '../db';
-import { authMiddleware, AuthRequest } from '../middleware/auth';
-import { sendEmail, welcomeEmail } from '../email';
+import { authMiddleware, AuthRequest, optionalAuth } from '../middleware/auth';
+import { sendEmail, verificationEmail, passwordResetEmail } from '../email';
 
 const router = express.Router();
 
@@ -28,9 +29,11 @@ router.post('/register', async (req, res, next) => {
 
   try {
     const hashedPassword = await bcryptjs.hash(password, 10);
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+
     const result = await query(
-      'INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id, name, email',
-      [name, email, hashedPassword]
+      'INSERT INTO users (name, email, password, verification_token) VALUES ($1, $2, $3, $4) RETURNING id, name, email',
+      [name, email, hashedPassword, verificationToken]
     );
 
     // Log activity
@@ -39,13 +42,16 @@ router.post('/register', async (req, res, next) => {
       [result.rows[0].id, name, 'user_registered', `New user registered: ${email}`]
     );
 
-    // Send welcome email (non-blocking, errors caught)
-    const emailContent = welcomeEmail(name);
+    // Send verification email (non-blocking, errors caught)
+    const emailContent = verificationEmail(name, verificationToken);
     sendEmail(email, emailContent.subject, emailContent.html).catch((err) =>
-      console.error('Failed to send welcome email:', err)
+      console.error('Failed to send verification email:', err)
     );
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json({
+      ...result.rows[0],
+      message: 'Account created! Please check your email to verify your account.',
+    });
   } catch (error: any) {
     if (error.message.includes('duplicate')) {
       return res.status(400).json({ error: 'Email already exists' });
@@ -169,6 +175,130 @@ router.put('/change-password', authMiddleware, async (req: AuthRequest, res, nex
 router.post('/logout', (_req, res) => {
   res.clearCookie('token', { path: '/' });
   res.json({ message: 'Logged out successfully' });
+});
+
+// ─── Forgot Password ───
+// POST /api/auth/forgot-password - Send password reset email
+router.post('/forgot-password', async (req, res, next) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  try {
+    const userResult = await query('SELECT id, name, email FROM users WHERE email = $1', [email]);
+
+    // Always return success to prevent email enumeration
+    if (userResult.rows.length === 0) {
+      return res.json({ message: 'If that email exists, a password reset link has been sent.' });
+    }
+
+    const user = userResult.rows[0];
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await query(
+      'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
+      [resetToken, expiresAt, user.id]
+    );
+
+    // Send password reset email (non-blocking)
+    const emailContent = passwordResetEmail(user.name, resetToken);
+    sendEmail(email, emailContent.subject, emailContent.html).catch((err) =>
+      console.error('Failed to send password reset email:', err)
+    );
+
+    // Log activity
+    await query(
+      'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
+      [user.id, user.name, 'password_reset_requested', `Password reset requested for ${email}`]
+    );
+
+    res.json({ message: 'If that email exists, a password reset link has been sent.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─── Reset Password ───
+// POST /api/auth/reset-password - Reset password with token
+router.post('/reset-password', async (req, res, next) => {
+  const { token, new_password } = req.body;
+
+  if (!token || !new_password) {
+    return res.status(400).json({ error: 'Token and new password are required' });
+  }
+
+  if (new_password.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters' });
+  }
+
+  try {
+    const userResult = await query(
+      'SELECT id, name, email FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()',
+      [token]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const user = userResult.rows[0];
+    const hashedPassword = await bcryptjs.hash(new_password, 10);
+
+    await query(
+      'UPDATE users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2',
+      [hashedPassword, user.id]
+    );
+
+    // Log activity
+    await query(
+      'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
+      [user.id, user.name, 'password_reset', `Password reset completed for ${user.email}`]
+    );
+
+    res.json({ message: 'Password has been reset successfully. You can now log in.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─── Verify Email ───
+// POST /api/auth/verify-email - Verify email address with token
+router.post('/verify-email', async (req, res, next) => {
+  const { token } = req.body;
+
+  if (!token) {
+    return res.status(400).json({ error: 'Verification token is required' });
+  }
+
+  try {
+    const userResult = await query(
+      'SELECT id, name, email FROM users WHERE verification_token = $1 AND email_verified = FALSE',
+      [token]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or already verified token' });
+    }
+
+    const user = userResult.rows[0];
+
+    await query(
+      'UPDATE users SET email_verified = TRUE, verification_token = NULL WHERE id = $1',
+      [user.id]
+    );
+
+    // Log activity
+    await query(
+      'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
+      [user.id, user.name, 'email_verified', `Email verified for ${user.email}`]
+    );
+
+    res.json({ message: 'Email verified successfully! You can now log in.' });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // ─── Avatar Upload Setup ───

@@ -61,11 +61,22 @@ export default function ApplyPage() {
 
     try {
       const payload = new FormData();
+      // Map frontend field names to backend field names
+      const fieldMappings: Record<string, string> = {
+        organization_name: 'community_name',
+        organization_type: 'org_type',
+        reason: 'motivation',
+        planned_activities: 'activities',
+        location: 'address',
+        contact_phone: 'phone',
+        contact_email: 'contact_info',
+      };
       Object.entries(formData).forEach(([key, value]) => {
-        if (value) payload.append(key, value);
+        const backendKey = fieldMappings[key] || key;
+        if (value) payload.append(backendKey, value);
       });
-      if (certificateFile) payload.append('certificate', certificateFile);
-      if (logoFile) payload.append('logo', logoFile);
+      if (certificateFile) payload.append('certificate_file', certificateFile);
+      if (logoFile) payload.append('logo_file', logoFile);
 
       const res = await apiFetch('/api/applications', {
         method: 'POST',
@@ -76,7 +87,7 @@ export default function ApplyPage() {
         setSuccess(true);
       } else {
         const errData = await res.json().catch(() => null);
-        setError(errData?.message || 'Failed to submit application');
+        setError(errData?.error || errData?.message || 'Failed to submit application');
       }
     } catch (err) { setError('Something went wrong. Please try again.'); }
     finally { setSubmitting(false); }
@@ -188,10 +199,6 @@ export default function ApplyPage() {
             </h1>
             <p className="text-slate-400 mb-8">Apply to create and manage communities on Smart Connects</p>
 
-            {error && (
-              <div className="mb-6 p-4 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-sm">{error}</div>
-            )}
-
             <form onSubmit={handleSubmit} className="space-y-6">
               {/* Organization Info */}
               <div className="pb-4 border-b border-white/5">
@@ -199,12 +206,12 @@ export default function ApplyPage() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className={labelClass}>Organization Name *</label>
+                      <label className={labelClass}>Organization Name <span className="text-red-400">*</span></label>
                       <input type="text" name="organization_name" value={formData.organization_name} onChange={handleChange} required
                         placeholder="Your organization" className={inputClass} />
                     </div>
                     <div>
-                      <label className={labelClass}>Organization Type *</label>
+                      <label className={labelClass}>Organization Type <span className="text-red-400">*</span></label>
                       <select name="organization_type" value={formData.organization_type} onChange={handleChange} required className={inputClass}>
                         <option value="" className="bg-slate-900">Select type</option>
                         <option value="student_club" className="bg-slate-900">Student Club</option>
@@ -215,8 +222,7 @@ export default function ApplyPage() {
                       </select>
                     </div>
                   </div>
-                  <div>
-                    <label className={labelClass}>Description *</label>
+                  <div>                      <label className={labelClass}>Description <span className="text-red-400">*</span></label>
                     <textarea name="description" value={formData.description} onChange={handleChange} required
                       placeholder="Tell us about your organization..." rows={3} className={`${inputClass} resize-none`} />
                   </div>
@@ -244,8 +250,7 @@ export default function ApplyPage() {
               <div className="pb-4 border-b border-white/5">
                 <h3 className="text-lg font-semibold text-slate-200 mb-4">About Your Plans</h3>
                 <div className="space-y-4">
-                  <div>
-                    <label className={labelClass}>Why do you want to be an organizer? *</label>
+                  <div>                      <label className={labelClass}>Why do you want to be an organizer? <span className="text-red-400">*</span></label>
                     <textarea name="reason" value={formData.reason} onChange={handleChange} required
                       placeholder="Explain your motivation..." rows={3} className={`${inputClass} resize-none`} />
                   </div>
@@ -274,16 +279,15 @@ export default function ApplyPage() {
 
               {/* Contact */}
               <div className="pb-4 border-b border-white/5">
-                <h3 className="text-lg font-semibold text-slate-200 mb-4">Contact Information</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className={labelClass}>Contact Email</label>
-                    <input type="email" name="contact_email" value={formData.contact_email} onChange={handleChange}
+                <h3 className="text-lg font-semibold text-slate-200 mb-4">Contact Information</h3>                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelClass}>Contact Email <span className="text-red-400">*</span></label>
+                    <input type="email" name="contact_email" value={formData.contact_email} onChange={handleChange} required
                       placeholder="contact@org.com" className={inputClass} />
                   </div>
                   <div>
-                    <label className={labelClass}>Contact Phone</label>
-                    <input type="tel" name="contact_phone" value={formData.contact_phone} onChange={handleChange}
+                    <label className={labelClass}>Contact Phone <span className="text-red-400">*</span></label>
+                    <input type="tel" name="contact_phone" value={formData.contact_phone} onChange={handleChange} required
                       placeholder="+1 234 567 8900" className={inputClass} />
                   </div>
                 </div>
@@ -294,8 +298,8 @@ export default function ApplyPage() {
                 <h3 className="text-lg font-semibold text-slate-200 mb-4">Supporting Documents</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className={labelClass}>Certificate / Proof</label>
-                    <input type="file" accept=".pdf,.jpg,.jpeg,.png"
+                    <label className={labelClass}>Certificate / Proof <span className="text-red-400">*</span></label>
+                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" required
                       onChange={(e) => setCertificateFile(e.target.files?.[0] || null)}
                       className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer" />
                     <p className="mt-1 text-xs text-slate-500">PDF, JPG, PNG</p>
@@ -310,8 +314,13 @@ export default function ApplyPage() {
                 </div>
               </div>
 
+              {/* Error message — shown below the submit button */}
+              {error && (
+                <div className="p-4 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-sm">{error}</div>
+              )}
+
               {/* Submit */}
-              <div className="pt-4">
+              <div className="pt-2">
                 <button type="submit" disabled={submitting}
                   className="w-full px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white font-semibold shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 transition-all hover:scale-[1.01] disabled:opacity-50 disabled:hover:scale-100">
                   {submitting ? 'Submitting...' : 'Submit Application'}

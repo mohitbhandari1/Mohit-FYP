@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '../components/Navbar';
 import Chatbot from '../components/Chatbot';
@@ -23,7 +22,6 @@ function getPasswordStrength(password: string): { score: number; label: string; 
 }
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -34,6 +32,7 @@ export default function RegisterPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [registered, setRegistered] = useState<{ name: string; email: string } | null>(null);
 
   const strength = password ? getPasswordStrength(password) : null;
 
@@ -100,7 +99,7 @@ export default function RegisterPage() {
         return;
       }
 
-      router.push('/login?registered=true');
+      setRegistered({ name: data.name || name, email: email });
     } catch {
       setError('Something went wrong. Please try again.');
     }
@@ -131,18 +130,70 @@ export default function RegisterPage() {
               <p className="text-sm text-slate-400 mt-1">Join the Smart Connects community</p>
             </div>
 
-            {/* Error display */}
-            {error && (
-              <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-300 flex items-start gap-3 animate-scale-in">
-                <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                </svg>
-                <span>{error}</span>
-              </div>
-            )}
+            {/* Registration confirmed - show verification message */}
+            {registered ? (
+              <div className="py-6 text-center">
+                {/* Success icon */}
+                <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-green-500/20 border border-emerald-500/20 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
 
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-5">
+                <h2 className="text-xl font-bold text-slate-100 mb-2">Account Created! 🎉</h2>
+                <p className="text-sm text-slate-300 mb-1">
+                  Hi <strong className="text-amber-400">{registered.name}</strong>,
+                </p>
+                <p className="text-sm text-slate-400 mb-6">
+                  We&apos;ve sent a verification email to{' '}
+                  <strong className="text-slate-200">{registered.email}</strong>.
+                </p>
+
+                {/* Email icon */}
+                <div className="bg-amber-500/5 border border-amber-500/10 rounded-2xl p-6 mb-6 text-left">
+                  <div className="flex items-start gap-3">
+                    <svg className="w-6 h-6 flex-shrink-0 text-amber-400 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+                    </svg>
+                    <div>
+                      <p className="text-sm font-medium text-slate-200 mb-1">Check your inbox</p>
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        Please click the verification link in the email to activate your account.{" "}
+                        You won&apos;t be able to sign in until your email is verified.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Spam tip */}
+                <p className="text-xs text-slate-500 mb-8">
+                  Didn&apos;t receive the email? Check your spam folder or request a{" "}
+                  <Link href="/forgot-password" className="text-amber-400 hover:text-amber-300">
+                    password reset
+                  </Link>
+                </p>
+
+                <Link
+                  href="/login"
+                  className="btn-primary inline-flex items-center gap-2 py-3 px-8 rounded-xl font-semibold"
+                >
+                  Go to Sign In
+                </Link>
+              </div>
+            ) : (
+              <>
+                {/* Error display */}
+                {error && (
+                  <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-300 flex items-start gap-3 animate-scale-in">
+                    <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                    </svg>
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                {/* Form */}
+                <form onSubmit={handleSubmit} className="space-y-5">
               {/* Name field */}
               <div>
                 <label htmlFor="name" className="block text-sm font-medium text-slate-300 mb-2">
@@ -384,6 +435,8 @@ export default function RegisterPage() {
                 Sign in
               </Link>
             </p>
+            </>
+            )}
           </div>
         </div>
       </main>

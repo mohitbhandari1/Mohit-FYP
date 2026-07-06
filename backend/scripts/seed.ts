@@ -10,8 +10,8 @@ async function seed() {
 
     // Create admin user only (other users are managed through registration)
     await query(
-      'INSERT INTO users (name, email, password, role, is_admin, interests) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (email) DO NOTHING',
-      ['Admin User', 'admin@smartconnects.com', adminPassword, 'admin', true, 'Technology, Community'],
+      'INSERT INTO users (name, email, password, role, is_admin, interests, email_verified) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (email) DO NOTHING',
+      ['Admin User', 'admin@smartconnects.com', adminPassword, 'admin', true, 'Technology, Community', true],
     );
 
     console.log('Sample data seeded successfully.');
