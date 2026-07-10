@@ -10,7 +10,7 @@ router.get('/', async (req, res, next) => {
   const limit = Number(req.query.limit) || 20;
 
   try {
-    let sql = 'SELECT id, name, avatar_url, role FROM users WHERE 1=1';
+    let sql = 'SELECT id, name, avatar_url, role FROM users WHERE deleted_at IS NULL';
     const params: any[] = [];
     let paramIdx = 1;
 

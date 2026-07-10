@@ -20,7 +20,7 @@ router.post('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
 
   try {
     // Check if event exists
-    const eventCheck = await query('SELECT id, community_id, title FROM events WHERE id = $1', [event_id]);
+    const eventCheck = await query('SELECT id, community_id, title FROM events WHERE id = $1 AND deleted_at IS NULL', [event_id]);
     if (eventCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Event not found' });
     }
@@ -309,7 +309,7 @@ router.post('/community/join/:communityId', authMiddleware, async (req: AuthRequ
   const communityId = Number(req.params.communityId);
   try {
     // Check community exists
-    const community = await query('SELECT id, name FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT id, name FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }
@@ -349,7 +349,7 @@ router.post('/community/leave/:communityId', authMiddleware, async (req: AuthReq
   const communityId = Number(req.params.communityId);
   try {
     // Check community exists
-    const community = await query('SELECT id, name, owner_id FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT id, name, owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }
@@ -412,7 +412,7 @@ router.get('/community/count/:communityId', async (req, res, next) => {
   const communityId = Number(req.params.communityId);
   try {
     const result = await query(
-      'SELECT member_count FROM communities WHERE id = $1',
+      'SELECT member_count FROM communities WHERE id = $1 AND deleted_at IS NULL',
       [communityId]
     );
     if (result.rows.length === 0) {
@@ -429,7 +429,7 @@ router.get('/event/count/:eventId', async (req, res, next) => {
   const eventId = Number(req.params.eventId);
   try {
     const result = await query(
-      'SELECT attendee_count FROM events WHERE id = $1',
+      'SELECT attendee_count FROM events WHERE id = $1 AND deleted_at IS NULL',
       [eventId]
     );
     if (result.rows.length === 0) {

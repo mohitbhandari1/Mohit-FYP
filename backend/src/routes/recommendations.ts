@@ -36,6 +36,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res, next) => {
               u.name as owner_name
        FROM communities c
        LEFT JOIN users u ON c.owner_id = u.id
+       WHERE c.deleted_at IS NULL
        ORDER BY c.member_count DESC`
     );
 

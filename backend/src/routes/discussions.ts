@@ -68,7 +68,7 @@ router.post('/:communityId', authMiddleware, async (req: AuthRequest, res, next)
 
   try {
     // Check if community exists
-    const communityCheck = await query('SELECT id, owner_id FROM communities WHERE id = $1', [communityId]);
+    const communityCheck = await query('SELECT id, owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (communityCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }
@@ -142,7 +142,7 @@ router.delete('/:communityId/:discussionId', authMiddleware, async (req: AuthReq
       return res.status(404).json({ error: 'Discussion not found' });
     }
 
-    const community = await query('SELECT owner_id FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     const isOwner = community.rows[0]?.owner_id === req.userId;
     const isAuthor = discussion.rows[0].user_id === req.userId;
     const isAdmin = req.userRole === 'admin';

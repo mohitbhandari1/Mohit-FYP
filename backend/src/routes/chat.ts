@@ -56,6 +56,27 @@ router.post('/', authMiddleware, async (req: AuthRequest, res, next) => {
 
     let response = result!.response.text();
 
+    // ─── Parse Action Tags (order-independent attribute matching) ───
+    const actions: { type: string; id?: number; name: string; url?: string }[] = [];
+    const actionRegex = /<action\s+((?:\w+="[^"]*"\s*)*)\/>/gi;
+    let actionMatch;
+    while ((actionMatch = actionRegex.exec(response)) !== null) {
+      const attrs = actionMatch[1];
+      const typeMatch = attrs.match(/type="([^"]+)"/i);
+      const idMatch = attrs.match(/id="([^"]+)"/i);
+      const nameMatch = attrs.match(/name="([^"]+)"/i);
+      const urlMatch = attrs.match(/url="([^"]+)"/i);
+      if (!typeMatch) continue;
+      actions.push({
+        type: typeMatch[1] as any,
+        ...(idMatch ? { id: parseInt(idMatch[1]) } : {}),
+        name: nameMatch?.[1] || '',
+        ...(urlMatch ? { url: urlMatch[1] } : {}),
+      });
+    }
+    // Remove action tags from the response text
+    response = response.replace(actionRegex, '').trim();
+
     // ─── Check for SQL block ───
     const sqlMatch = response.match(/<sql>([\s\S]*?)<\/sql>/i);
     if (sqlMatch) {
@@ -79,7 +100,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res, next) => {
           }
           // Replace {{RESULTS}} placeholder with actual data
           if (response.includes('{{RESULTS}}')) {
-            response = response.replace('{{RESULTS}}', formatted);
+            response = response.replace(/\{\{RESULTS\}\}/g, formatted);
           } else {
             // Gemini forgot the placeholder — append results directly
             response += `\n\n${formatted}`;
@@ -95,6 +116,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res, next) => {
 
     res.json({
       reply: response,
+      actions: actions.length > 0 ? actions : undefined,
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {

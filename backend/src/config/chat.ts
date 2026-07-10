@@ -88,20 +88,69 @@ Your job is to answer user questions about communities, events, members, and eve
 - After the SQL, write your full response replacing data with {{RESULTS}} placeholder.
 - If you can answer without a DB query, just respond normally.
 
-## Example
+## Formatting guide
+Use these formatting styles to make your responses visually rich:
+
+### Tables
+When querying multiple rows of data, the system automatically renders results as a formatted table. Just use {{RESULTS}} where you want the table to appear.
+
+### Lists
+Use bullet points (• or -) for lists of items or non-tabular data.
+
+### Bold
+Use **double asterisks** for emphasis on names, numbers, or important terms.
+
+### Headings
+Use ## for section headings, ### for subsection headings.
+
+### Action buttons
+To suggest an action the user can take, use an <action /> tag:
+- <action type="join" id="1" name="Join Tech Club" /> — navigates to community page
+- <action type="rsvp" id="5" name="RSVP to Workshop" /> — navigates to event page
+- <action type="view" url="/communities" name="Browse Communities" /> — navigates to any URL
+
+Always include action buttons when you find a specific community, event, or resource the user can interact with.
+
+## Examples
+
+### Table with action
 User: "Show me all communities"
-<sql>SELECT name, description, category, member_count FROM communities ORDER BY member_count DESC LIMIT 10</sql>
-Here are the communities on Smart Connects:
+<sql>SELECT id, name, description, category, member_count FROM communities ORDER BY member_count DESC LIMIT 10</sql>
+Here are the top communities on Smart Connects:
+
 {{RESULTS}}
 
+<action type="view" url="/communities" name="Browse All Communities" />
+
+### Event table
 User: "What events are happening this week?"
-<sql>SELECT e.title, e.event_date, c.name AS community_name FROM events e JOIN communities c ON e.community_id = c.id WHERE e.event_date >= NOW() AND e.event_date <= NOW() + INTERVAL '7 days' ORDER BY e.event_date ASC</sql>
+<sql>SELECT e.id, e.title, e.event_date, c.name AS community_name FROM events e JOIN communities c ON e.community_id = c.id WHERE e.event_date >= NOW() AND e.event_date <= NOW() + INTERVAL 7 days ORDER BY e.event_date ASC LIMIT 10</sql>
 Here are the events happening this week:
+
 {{RESULTS}}
 
+### Single stat
 User: "How many communities are there?"
 <sql>SELECT COUNT(*) FROM communities</sql>
-There are {{RESULTS}} communities on Smart Connects.
+There are **{{RESULTS}}** communities on Smart Connects. 🎉
+
+### Join with action button
+User: "I want to join Tech Club"
+<sql>SELECT id, name, description FROM communities WHERE name ILIKE '%tech club%' LIMIT 1</sql>
+I found it! Here are the details:
+
+{{RESULTS}}
+
+<action type="join" id="1" name="Join Tech Club" />
+
+### Multiple action buttons
+User: "Find coding communities"
+<sql>SELECT id, name, description, member_count FROM communities WHERE category ILIKE '%tech%' OR description ILIKE '%coding%' ORDER BY member_count DESC LIMIT 5</sql>
+Here are some coding communities I found:
+
+{{RESULTS}}
+
+<action type="view" url="/communities" name="Browse All Communities" />
 
 ## Rules
 - ONLY SELECT queries — never INSERT, UPDATE, DELETE, DROP, ALTER, etc.
@@ -110,29 +159,8 @@ There are {{RESULTS}} communities on Smart Connects.
 - Use JOINs to connect related tables.
 - When the user says "my" or "my profile", they mean userId.
 - Be friendly and conversational. Use emojis sparingly.
-
-## Handling action requests (joining, RSVPing, creating, etc.)
-- If the user asks to PERFORM an action (e.g. "join a community", "RSVP to an event", "create an event"), you MUST help them.
-  Do NOT say you can't process it. Never say you can only answer with SELECT queries.
-- Step 1: Query the database to find the community or event they're asking about.
-- Step 2: Write guidance using {{RESULTS}} where the query results will appear.
-  The {{RESULTS}} token will be replaced with the actual data from your query.
-- Example — joining a community by name:
-  User: "I want to join the Campus Tech Club"
-  <sql>SELECT id, name FROM communities WHERE name ILIKE '%campus tech%' LIMIT 1</sql>
-  Great! I found **{{RESULTS}}**
-  To join, just go to that community's page and click the **"Join Community"** button. You'll be a member instantly! 🎉
-- Example — joining when user mentions the owner's name (not the community name):
-  User: "I want to join aayush paneru club"
-  <sql>SELECT c.id, c.name, u.name AS owner FROM communities c JOIN users u ON c.owner_id = u.id WHERE u.name ILIKE '%aayush%' LIMIT 1</sql>
-  I found a community owned by them! **{{RESULTS}}**
-  To join, go to that community's page and click **"Join Community"**. Simple as that!
-- Example — RSVPing to an event:
-  User: "I want to attend the JavaScript workshop"
-  <sql>SELECT id, title FROM events WHERE title ILIKE '%javascript%' LIMIT 1</sql>
-  I found it! **{{RESULTS}}**
-  To RSVP, go to that event's page and click **"I'm Attending"**. All set!
-- IMPORTANT: Only use {{RESULTS}} — NOT {{RESULTS.id}}, {{RESULTS.name}}, etc. The system only replaces the exact text {{RESULTS}} with the formatted query output.`;
+- The {{RESULTS}} token will be replaced with actual data by the system. Always use it where you want query results to appear.
+- Always include an <action /> button when returning results for communities or events.`;
 
 // ─── SQL Helpers ───────────────────────────────────────────────────────────
 
@@ -159,24 +187,45 @@ export function sanitizeSql(sql: string): string {
   return sql;
 }
 
-/** Formats query results into a readable string for the AI response. */
+/** Convert snake_case column names to Title Case labels. */
+function prettyColumnName(name: string): string {
+  return name
+    .replace(/_/g, ' ')
+    .replace(/\bid\b/gi, 'ID')
+    .replace(/\burl\b/gi, 'URL')
+    .replace(/\brsvp\b/gi, 'RSVP')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/** Formats query results into a pipe-table string (or single value). */
 export function formatResults(rows: Record<string, any>[]): string {
   if (rows.length === 0) return 'No results found.';
   const keys = Object.keys(rows[0]);
-  // Single value (e.g. COUNT(*))
+
+  // Single value (e.g. COUNT(*)) — just return the value
   if (keys.length === 1 && rows.length === 1) {
     return String(rows[0][keys[0]]);
   }
-  // Multiple rows — formatted as bullet list
-  const lines: string[] = [];
-  for (const row of rows) {
-    const parts = keys.map(k => {
+
+  // Single key, multiple rows — return as simple list
+  if (keys.length === 1) {
+    return rows.map(r => '• ' + String(r[keys[0]])).join('\n');
+  }
+
+  // Multiple keys — format as a complete pipe table (header + separator + rows)
+  const prettyKeys = keys.map(prettyColumnName);
+  const header = '| ' + prettyKeys.join(' | ') + ' |';
+  const separator = '| ' + keys.map(() => '---').join(' | ') + ' |';
+  const dataRows = rows.map(row => {
+    const cells = keys.map(k => {
       const v = row[k];
       if (v === null || v === undefined) return 'N/A';
       const s = String(v);
-      return s.length > 80 ? s.substring(0, 77) + '...' : s;
+      // Truncate very long values and escape pipes within cell values
+      return s.length > 60 ? s.substring(0, 57) + '...' : s.replace(/\|/g, '\\|');
     });
-    lines.push('• ' + parts.join(' | '));
-  }
-  return lines.join('\n');
+    return '| ' + cells.join(' | ') + ' |';
+  });
+
+  return [header, separator, ...dataRows].join('\n');
 }

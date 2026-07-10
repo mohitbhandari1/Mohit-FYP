@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '../../components/Navbar';
@@ -33,7 +33,20 @@ export default function CommunityDetailPage() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [hoverRating, setHoverRating] = useState(0);
+  const [showMenu, setShowMenu] = useState(false);
   const { addToast } = useToast();
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    if (showMenu) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showMenu]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -218,18 +231,55 @@ export default function CommunityDetailPage() {
                   Website
                 </a>
               )}
-            </div>
-            <button
-              onClick={handleJoinLeave}
-              disabled={joining}
-              className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-50 ${
-                isMember
-                  ? 'border border-red-500/20 bg-red-500/5 text-red-400 hover:bg-red-500/10'
-                  : 'btn-primary'
-              }`}
-            >
-              {joining ? 'Processing...' : isMember ? 'Leave Community' : 'Join Community'}
-            </button>
+            </div>              {isMember ? (
+                <div className="relative" ref={menuRef}>
+                  <button
+                    onClick={() => setShowMenu(!showMenu)}
+                    className="p-2.5 rounded-xl border border-white/10 bg-white/5 text-slate-400 hover:text-white hover:border-white/20 transition-all"
+                    aria-label="More options"
+                  >
+                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                      <circle cx="12" cy="5" r="1.5" />
+                      <circle cx="12" cy="12" r="1.5" />
+                      <circle cx="12" cy="19" r="1.5" />
+                    </svg>
+                  </button>
+                  {showMenu && (
+                    <div className="absolute right-0 bottom-full mb-2 w-48 rounded-xl border border-white/10 bg-slate-900 backdrop-blur-xl shadow-xl shadow-black/40 overflow-hidden z-50 animate-scale-in origin-bottom-right">
+                      <button
+                        onClick={() => { setShowMenu(false); handleJoinLeave(); }}
+                        disabled={joining}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+                        </svg>
+                        {joining ? 'Leaving...' : 'Leave Community'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowMenu(false);
+                          addToast('info', 'Thank you. This community has been reported for review.');
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-white/5 transition-colors border-t border-white/5"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3v1.5M3 21v-6m0 0l2.77-.693a9 9 0 016.208.682l.108.054a9 9 0 006.086.71l3.114-.732a48.524 48.524 0 01-.005-10.499l-3.11.732a9 9 0 01-6.085-.711l-.108-.054a9 9 0 00-6.208-.682L3 4.5M3 15V4.5" />
+                        </svg>
+                        Report Community
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  onClick={handleJoinLeave}
+                  disabled={joining}
+                  className="px-6 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-50 btn-primary"
+                >
+                  {joining ? 'Processing...' : 'Join Community'}
+                </button>
+              )}
           </div>
 
           {/* Tabs */}

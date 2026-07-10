@@ -418,7 +418,7 @@ router.get('/me', authMiddleware, async (req: AuthRequest, res, next) => {
     const user = result.rows[0];
     // Check if user owns any communities
     const ownedResult = await query(
-      'SELECT COUNT(*) as count FROM communities WHERE owner_id = $1',
+      'SELECT COUNT(*) as count FROM communities WHERE owner_id = $1 AND deleted_at IS NULL',
       [req.userId]
     );
     user.owns_community = parseInt(ownedResult.rows[0].count) > 0;

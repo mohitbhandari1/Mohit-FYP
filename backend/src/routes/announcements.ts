@@ -34,7 +34,7 @@ router.post('/:communityId', authMiddleware, async (req: AuthRequest, res, next)
 
   try {
     // Verify user owns this community (or is admin)
-    const community = await query('SELECT owner_id, name FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT owner_id, name FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }
@@ -67,7 +67,7 @@ router.put('/:communityId/:announcementId', authMiddleware, async (req: AuthRequ
   const { title, content } = req.body;
 
   try {
-    const community = await query('SELECT owner_id FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }
@@ -97,7 +97,7 @@ router.delete('/:communityId/:announcementId', authMiddleware, async (req: AuthR
   const announcementId = Number(req.params.announcementId);
 
   try {
-    const community = await query('SELECT owner_id FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }

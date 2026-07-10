@@ -64,7 +64,7 @@ router.get('/', async (req, res, next) => {
               c.is_private, c.member_approval,
               c.created_at,
               u.name as owner_name
-              FROM communities c LEFT JOIN users u ON c.owner_id = u.id WHERE 1=1`;
+              FROM communities c LEFT JOIN users u ON c.owner_id = u.id WHERE c.deleted_at IS NULL`;
     const params: any[] = [];
     let paramIdx = 1;
 
@@ -87,7 +87,7 @@ router.get('/', async (req, res, next) => {
     const result = await query(sql, params);
 
     // Also get total count for pagination
-    let countSql = 'SELECT COUNT(*) as total FROM communities WHERE 1=1';
+    let countSql = 'SELECT COUNT(*) as total FROM communities WHERE deleted_at IS NULL';
     const countParams: any[] = [];
     let countIdx = 1;
 
@@ -118,7 +118,7 @@ router.get('/', async (req, res, next) => {
 // GET /api/communities/categories - List distinct categories
 router.get('/categories', async (_req, res, next) => {
   try {
-    const result = await query('SELECT DISTINCT category FROM communities WHERE category IS NOT NULL ORDER BY category');
+    const result = await query('SELECT DISTINCT category FROM communities WHERE category IS NOT NULL AND deleted_at IS NULL ORDER BY category');
     res.json(result.rows.map((r: any) => r.category));
   } catch (error) {
     next(error);
@@ -131,7 +131,7 @@ router.get('/my-owned', authMiddleware, async (req: AuthRequest, res, next) => {
     const result = await query(
       `SELECT c.*, u.name as owner_name
        FROM communities c LEFT JOIN users u ON c.owner_id = u.id
-       WHERE c.owner_id = $1
+       WHERE c.owner_id = $1 AND c.deleted_at IS NULL
        ORDER BY c.created_at DESC`,
       [req.userId]
     );
@@ -151,7 +151,7 @@ router.get('/:id', async (req, res, next) => {
   try {
     const result = await query(
       `SELECT c.*, u.name as owner_name, u.email as owner_email, u.avatar_url as owner_avatar
-       FROM communities c LEFT JOIN users u ON c.owner_id = u.id WHERE c.id = $1`,
+       FROM communities c LEFT JOIN users u ON c.owner_id = u.id WHERE c.id = $1 AND c.deleted_at IS NULL`,
       [communityId]
     );
     if (result.rows.length === 0) {
@@ -218,7 +218,7 @@ router.put('/:id', authMiddleware, uploadCommunityImages.fields([
 
   try {
     // Allow owner or admin to edit
-    const community = await query('SELECT owner_id, banner_image, logo FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT owner_id, banner_image, logo FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }
@@ -262,11 +262,11 @@ router.put('/:id', authMiddleware, uploadCommunityImages.fields([
   }
 });
 
-// DELETE /api/communities/:id - Delete community
+// DELETE /api/communities/:id - Soft-delete community (move to trash)
 router.delete('/:id', authMiddleware, async (req: AuthRequest, res, next) => {
   const communityId = Number(req.params.id);
   try {
-    const community = await query('SELECT owner_id, name FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT owner_id, name FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }
@@ -275,16 +275,16 @@ router.delete('/:id', authMiddleware, async (req: AuthRequest, res, next) => {
       return res.status(403).json({ error: 'Not authorized to delete this community' });
     }
 
-    await query('DELETE FROM communities WHERE id = $1', [communityId]);
+    await query('UPDATE communities SET deleted_at = NOW() WHERE id = $1', [communityId]);
 
     // Log activity
     const user = await query('SELECT name FROM users WHERE id = $1', [req.userId]);
     await query(
       'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
-      [req.userId, user.rows[0]?.name || '', 'community_deleted', `Deleted community: ${community.rows[0].name}`]
+      [req.userId, user.rows[0]?.name || '', 'community_deleted', `Moved community to trash: ${community.rows[0].name}`]
     );
 
-    res.json({ message: 'Community deleted' });
+    res.json({ message: 'Community moved to trash.' });
   } catch (error) {
     next(error);
   }
@@ -349,7 +349,7 @@ router.delete('/:id/members/:userId', authMiddleware, async (req: AuthRequest, r
 
   try {
     // Check community exists and user is the owner
-    const community = await query('SELECT id, name, owner_id FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT id, name, owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }
@@ -401,7 +401,7 @@ router.post('/:id/join', authMiddleware, async (req: AuthRequest, res, next) => 
   const communityId = Number(req.params.id);
   try {
     // Check community exists
-    const community = await query('SELECT id, name FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT id, name FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }
@@ -442,7 +442,7 @@ router.post('/:id/leave', authMiddleware, async (req: AuthRequest, res, next) =>
   const communityId = Number(req.params.id);
   try {
     // Check community exists
-    const community = await query('SELECT id, name, owner_id FROM communities WHERE id = $1', [communityId]);
+    const community = await query('SELECT id, name, owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL', [communityId]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }

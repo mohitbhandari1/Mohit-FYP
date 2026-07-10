@@ -54,7 +54,7 @@ router.get('/', async (req, res, next) => {
               e.location, e.event_type, e.community_id, e.attendee_count, e.max_attendees,
               e.banner_image, e.topics, e.payment_type, e.duration,
               c.name as community_name, c.owner_id, c.logo as community_logo
-              FROM events e JOIN communities c ON e.community_id = c.id WHERE 1=1`;
+              FROM events e JOIN communities c ON e.community_id = c.id WHERE e.deleted_at IS NULL AND c.deleted_at IS NULL`;
     const params: any[] = [];
     let paramIdx = 1;
 
@@ -111,7 +111,7 @@ router.get('/upcoming', async (req, res, next) => {
               e.banner_image, e.topics, e.payment_type,
               c.name as community_name, c.logo as community_logo
        FROM events e JOIN communities c ON e.community_id = c.id
-       WHERE e.event_date >= NOW()
+       WHERE e.event_date >= NOW() AND e.deleted_at IS NULL AND c.deleted_at IS NULL
        ORDER BY e.event_date ASC
        LIMIT $1`,
       [limit]
@@ -132,7 +132,7 @@ router.get('/my-saved', authMiddleware, async (req: AuthRequest, res, next) => {
        FROM saved_events se
        JOIN events e ON se.event_id = e.id
        JOIN communities c ON e.community_id = c.id
-       WHERE se.user_id = $1
+       WHERE se.user_id = $1 AND e.deleted_at IS NULL AND c.deleted_at IS NULL
        ORDER BY se.created_at DESC`,
       [req.userId]
     );
@@ -152,7 +152,7 @@ router.get('/organizer', authMiddleware, async (req: AuthRequest, res, next) => 
               c.name as community_name
        FROM events e
        JOIN communities c ON e.community_id = c.id
-       WHERE c.owner_id = $1
+       WHERE c.owner_id = $1 AND e.deleted_at IS NULL AND c.deleted_at IS NULL
        ORDER BY e.created_at DESC`,
       [req.userId]
     );
@@ -179,7 +179,7 @@ router.get('/:id', async (req, res, next) => {
        FROM events e
        JOIN communities c ON e.community_id = c.id
        LEFT JOIN users u ON c.owner_id = u.id
-       WHERE e.id = $1`,
+       WHERE e.id = $1 AND e.deleted_at IS NULL`,
       [eventId]
     );
     if (result.rows.length === 0) {
@@ -206,7 +206,7 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
 
   try {
     // Check that the user owns the community (or is admin)
-    const community = await query('SELECT owner_id FROM communities WHERE id = $1', [community_id]);
+    const community = await query('SELECT owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL', [community_id]);
     if (community.rows.length === 0) {
       return res.status(404).json({ error: 'Community not found' });
     }
@@ -261,7 +261,7 @@ router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), asyn
     // Check authorization (owner or admin)
     const event = await query(
       `SELECT e.id, e.banner_image, e.community_id FROM events e JOIN communities c ON e.community_id = c.id
-       WHERE e.id = $1 AND (c.owner_id = $2 OR $3 = 'admin')`,
+       WHERE e.id = $1 AND e.deleted_at IS NULL AND (c.owner_id = $2 OR $3 = 'admin')`,
       [eventId, req.userId, req.userRole]
     );
 
@@ -313,23 +313,23 @@ router.delete('/:id', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     const event = await query(
       `SELECT e.id, e.title FROM events e JOIN communities c ON e.community_id = c.id
-       WHERE e.id = $1 AND (c.owner_id = $2 OR $3 = 'admin')`,
+       WHERE e.id = $1 AND e.deleted_at IS NULL AND (c.owner_id = $2 OR $3 = 'admin')`,
       [eventId, req.userId, req.userRole]
     );
     if (event.rows.length === 0) {
       return res.status(403).json({ error: 'Not authorized to delete this event' });
     }
 
-    await query('DELETE FROM events WHERE id = $1', [eventId]);
+    await query('UPDATE events SET deleted_at = NOW() WHERE id = $1', [eventId]);
 
     // Log activity
     const user = await query('SELECT name FROM users WHERE id = $1', [req.userId]);
     await query(
       'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
-      [req.userId, user.rows[0]?.name || '', 'event_deleted', `Deleted event: ${event.rows[0].title}`]
+      [req.userId, user.rows[0]?.name || '', 'event_deleted', `Moved event to trash: ${event.rows[0].title}`]
     );
 
-    res.json({ message: 'Event deleted' });
+    res.json({ message: 'Event moved to trash.' });
   } catch (error) {
     next(error);
   }

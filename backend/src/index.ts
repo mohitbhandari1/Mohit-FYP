@@ -61,9 +61,9 @@ app.use('/api/admin', adminActivityRouter);
 app.get('/api/stats', async (_req, res) => {
   try {
     const [users, events, communities, connections] = await Promise.all([
-      pool.query('SELECT COUNT(*) as count FROM users'),
-      pool.query('SELECT COUNT(*) as count FROM events'),
-      pool.query('SELECT COUNT(*) as count FROM communities'),
+      pool.query('SELECT COUNT(*) as count FROM users WHERE deleted_at IS NULL'),
+      pool.query('SELECT COUNT(*) as count FROM events WHERE deleted_at IS NULL'),
+      pool.query('SELECT COUNT(*) as count FROM communities WHERE deleted_at IS NULL'),
       pool.query('SELECT COUNT(*) as count FROM community_members'),
     ]);
     res.json({
