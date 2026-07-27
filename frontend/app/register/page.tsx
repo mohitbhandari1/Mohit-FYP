@@ -26,8 +26,6 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [interests, setInterests] = useState<string[]>([]);
-  const [interestInput, setInterestInput] = useState('');
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -35,28 +33,6 @@ export default function RegisterPage() {
   const [registered, setRegistered] = useState<{ name: string; email: string } | null>(null);
 
   const strength = password ? getPasswordStrength(password) : null;
-
-  const addInterest = () => {
-    const tag = interestInput.trim().toLowerCase();
-    if (tag && !interests.includes(tag) && interests.length < 10) {
-      setInterests([...interests, tag]);
-      setInterestInput('');
-    }
-  };
-
-  const removeInterest = (tag: string) => {
-    setInterests(interests.filter((t) => t !== tag));
-  };
-
-  const handleInterestKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ',') {
-      e.preventDefault();
-      addInterest();
-    }
-    if (e.key === 'Backspace' && !interestInput && interests.length > 0) {
-      setInterests(interests.slice(0, -1));
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,7 +63,6 @@ export default function RegisterPage() {
           name,
           email,
           password,
-          interests: interests.join(', '),
         }),
       });
 
@@ -338,44 +313,6 @@ export default function RegisterPage() {
                     </div>
                   )}
                 </div>
-              </div>
-
-              {/* Interests tag input */}
-              <div>
-                <label htmlFor="interests" className="block text-sm font-medium text-slate-300 mb-2">
-                  Interests <span className="text-slate-500">(optional)</span>
-                </label>
-                <div className="input-glass rounded-xl p-3 min-h-[56px] flex flex-wrap items-center gap-2">
-                  {interests.map((tag) => (
-                    <span
-                      key={tag}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs font-medium text-amber-300"
-                    >
-                      {tag}
-                      <button
-                        type="button"
-                        onClick={() => removeInterest(tag)}
-                        className="text-amber-400/60 hover:text-amber-300 transition-colors"
-                        aria-label={`Remove ${tag}`}
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </span>
-                  ))}
-                  <input
-                    id="interests"
-                    type="text"
-                    value={interestInput}
-                    onChange={(e) => setInterestInput(e.target.value)}
-                    onKeyDown={handleInterestKeyDown}
-                    onBlur={addInterest}
-                    placeholder={interests.length === 0 ? 'Type and press Enter...' : ''}
-                    className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-sm text-slate-200 placeholder:text-slate-500"
-                  />
-                </div>
-                <p className="text-xs text-slate-500 mt-1.5">Press Enter or comma to add tags</p>
               </div>
 
               {/* Terms checkbox */}

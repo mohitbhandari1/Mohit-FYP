@@ -53,8 +53,12 @@ router.get('/', async (req, res, next) => {
     let sql = `SELECT e.id, e.title, e.description, e.event_date, e.start_time, e.end_date, e.end_time,
               e.location, e.event_type, e.community_id, e.attendee_count, e.max_attendees,
               e.banner_image, e.topics, e.payment_type, e.duration,
-              c.name as community_name, c.owner_id, c.logo as community_logo
-              FROM events e JOIN communities c ON e.community_id = c.id WHERE e.deleted_at IS NULL AND c.deleted_at IS NULL`;
+              c.name as community_name, c.owner_id, c.logo as community_logo,
+              u.name as community_owner_name,
+              (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE event_id = e.id) as avg_rating
+              FROM events e JOIN communities c ON e.community_id = c.id
+              LEFT JOIN users u ON c.owner_id = u.id
+              WHERE e.deleted_at IS NULL AND c.deleted_at IS NULL`;
     const params: any[] = [];
     let paramIdx = 1;
 
@@ -109,8 +113,11 @@ router.get('/upcoming', async (req, res, next) => {
       `SELECT e.id, e.title, e.description, e.event_date, e.start_time, e.location,
               e.event_type, e.community_id, e.attendee_count, e.max_attendees,
               e.banner_image, e.topics, e.payment_type,
-              c.name as community_name, c.logo as community_logo
+              c.name as community_name, c.logo as community_logo,
+              u.name as community_owner_name,
+              (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE event_id = e.id) as avg_rating
        FROM events e JOIN communities c ON e.community_id = c.id
+       LEFT JOIN users u ON c.owner_id = u.id
        WHERE e.event_date >= NOW() AND e.deleted_at IS NULL AND c.deleted_at IS NULL
        ORDER BY e.event_date ASC
        LIMIT $1`,
@@ -127,11 +134,14 @@ router.get('/my-saved', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     const result = await query(
       `SELECT e.id, e.title, e.description, e.event_date, e.location, e.banner_image,
-              e.community_id, e.attendee_count, e.max_attendees, e.event_type,
-              c.name as community_name
+              e.community_id, e.attendee_count, e.max_attendees, e.event_type, e.start_time,
+              c.name as community_name,
+              u.name as community_owner_name,
+              (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE event_id = e.id) as avg_rating
        FROM saved_events se
        JOIN events e ON se.event_id = e.id
        JOIN communities c ON e.community_id = c.id
+       LEFT JOIN users u ON c.owner_id = u.id
        WHERE se.user_id = $1 AND e.deleted_at IS NULL AND c.deleted_at IS NULL
        ORDER BY se.created_at DESC`,
       [req.userId]

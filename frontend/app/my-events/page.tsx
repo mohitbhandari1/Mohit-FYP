@@ -34,9 +34,21 @@ export default function MyEventsPage() {
   const attendingEvents = rsvps.filter((r) => r.status === 'attending');
   const notAttendingEvents = rsvps.filter((r) => r.status === 'not_attending');
 
-  const formatDate = (dateStr: string) => {
+  const formatDateTime = (dateStr: string, timeStr?: string) => {
     if (!dateStr) return '';
-    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const d = new Date(dateStr);
+    const datePart = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    if (timeStr) {
+      const [h, m] = timeStr.split(':').map(Number);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const hour12 = h % 12 || 12;
+      return `${datePart} · ${hour12}:${m.toString().padStart(2, '0')} ${ampm}`;
+    }
+    try {
+      const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      if (timePart !== '12:00 AM') return `${datePart} · ${timePart}`;
+    } catch {}
+    return datePart;
   };
 
   const getDisplayEvents = () => {
@@ -157,27 +169,40 @@ export default function MyEventsPage() {
 
                   {/* Content */}
                   <div className="p-4">
-                    <h3 className="font-semibold text-slate-100 group-hover:text-amber-400 transition-colors line-clamp-1">
+                    <h3 className="font-semibold text-slate-100 group-hover:text-amber-400 transition-colors line-clamp-2 leading-snug">
                       {event.title || event.event_title}
                     </h3>
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {(event.event_date || event.date) && (
-                        <span className="inline-flex items-center gap-1 text-xs text-slate-400">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                          {formatDate(event.event_date || event.date)}
-                        </span>
-                      )}
-                      {event.location && (
-                        <span className="inline-flex items-center gap-1 text-xs text-slate-400">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                          </svg>
-                          {event.location}
-                        </span>
-                      )}
-                    </div>
+
+                    {/* Date · Location — one line */}
+                    {(event.event_date || event.date || event.location) && (
+                      <div className="mt-2 text-xs text-slate-300">
+                        {(event.event_date || event.date) && (
+                          <span>{formatDateTime(event.event_date || event.date, event.start_time)}</span>
+                        )}
+                        {(event.event_date || event.date) && event.location && <span> </span>}
+                        {event.location && <span>{event.location}</span>}
+                      </div>
+                    )}
+
+                    {/* by Organizer */}
+                    {event.community_owner_name && (
+                      <div className="text-xs text-slate-400">by {event.community_owner_name}</div>
+                    )}
+
+                    {/* Rating */}
+                    {event.avg_rating && (
+                      <div className="text-xs text-amber-400">
+                        <svg className="inline w-3.5 h-3.5 -mt-0.5 mr-0.5" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                        {event.avg_rating}
+                      </div>
+                    )}
+
+                    {/* Attendees */}
+                    {(event.attendee_count ?? 0) > 0 && (
+                      <div className="text-xs text-slate-400">{event.attendee_count} attendees</div>
+                    )}
                   </div>
                 </Link>
               ))}

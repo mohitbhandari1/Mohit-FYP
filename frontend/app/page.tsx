@@ -14,10 +14,13 @@ interface Event {
   description?: string;
   date?: string;
   event_date?: string;
+  start_time?: string;
   location?: string;
   banner_image?: string;
   community_name?: string;
+  community_owner_name?: string;
   attendee_count?: number;
+  avg_rating?: number;
 }
 
 interface Community {
@@ -166,23 +169,20 @@ export default function HomePage() {
     fetchRecs();
   }, [isAuthenticated]);
 
-  const handleRsvp = async (eventId: number, status: 'attending' | 'not_attending') => {
-    if (!isAuthenticated) { window.location.href = '/login'; return; }
+  const formatDateTime = (dateStr: string, timeStr?: string) => {
+    const d = new Date(dateStr);
+    const datePart = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    if (timeStr) {
+      const [h, m] = timeStr.split(':').map(Number);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const hour12 = h % 12 || 12;
+      return `${datePart} · ${hour12}:${m.toString().padStart(2, '0')} ${ampm}`;
+    }
     try {
-      const res = await apiFetch('/api/engagement/rsvp', {
-        method: 'POST',
-        body: JSON.stringify({ event_id: eventId, status }),
-      });
-      if (res.ok) {
-        setRsvpStatus((prev) => ({ ...prev, [eventId]: status }));
-        // Update attendee count immediately
-        setEvents((prev) => prev.map((e) =>
-          e.id === eventId
-            ? { ...e, attendee_count: Math.max(0, (e.attendee_count || 0) + (status === 'attending' ? 1 : -1)) }
-            : e
-        ));
-      }
-    } catch (err) { console.error('Failed to RSVP'); }
+      const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      if (timePart !== '12:00 AM') return `${datePart} \u00b7 ${timePart}`;
+    } catch {}
+    return datePart;
   };
 
   return (
@@ -339,67 +339,61 @@ export default function HomePage() {
                         </div>
                       )}
                       {/* Date badge */}
-                      {event.date && (
+                      {(event.event_date || event.date) && (
                         <div className="absolute top-3 left-3 px-3 py-1.5 rounded-lg bg-slate-900/80 backdrop-blur-sm border border-white/10 text-xs font-medium text-slate-200">
-                          {new Date(event.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          {new Date(event.event_date || event.date!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </div>
                       )}
                     </div>
 
                     {/* Event info */}
                     <div className="p-5">
-                      <h3 className="text-lg font-semibold text-slate-100 mb-2 line-clamp-1 group-hover:text-amber-300 transition-colors">
+                      <h3 className="text-lg font-semibold text-slate-100 line-clamp-2 leading-snug group-hover:text-amber-300 transition-colors">
                         {event.title}
                       </h3>
-                      {event.description && (
-                        <p className="text-sm text-slate-400 line-clamp-2 mb-3">{event.description}</p>
-                      )}
-                      <div className="flex items-center gap-3 text-xs text-slate-500">
-                        {event.location && (
-                          <span className="flex items-center gap-1">
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                            {event.location}
-                          </span>
-                        )}
-                        {event.community_name && (
-                          <span className="text-amber-400/70">{event.community_name}</span>
-                        )}
-                        {(event.attendee_count ?? 0) > 0 && (
-                          <span className="flex items-center gap-1 ml-auto">
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                            </svg>
-                            {event.attendee_count} attending
-                          </span>
-                        )}
-                      </div>
 
-                      {/* RSVP Buttons */}
-                      <div className="flex gap-2 mt-4 pt-4 border-t border-white/5">
-                        <button
-                          onClick={(e) => { e.preventDefault(); handleRsvp(event.id, 'attending'); }}
-                          className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
-                            rsvpStatus[event.id] === 'attending'
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-white/5 text-slate-400 border border-white/10 hover:bg-emerald-500/10 hover:text-emerald-400 hover:border-emerald-500/20'
-                          }`}
-                        >
-                          {rsvpStatus[event.id] === 'attending' ? '✓ Attending' : 'Attending'}
-                        </button>
-                        <button
-                          onClick={(e) => { e.preventDefault(); handleRsvp(event.id, 'not_attending'); }}
-                          className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
-                            rsvpStatus[event.id] === 'not_attending'
-                              ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                              : 'bg-white/5 text-slate-400 border border-white/10 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20'
-                          }`}
-                        >
-                          {rsvpStatus[event.id] === 'not_attending' ? '✗ Not Going' : 'Not Going'}
-                        </button>
-                      </div>
+                      {/* Date · Time · Location — one line */}
+                      {(event.event_date || event.date || event.location) && (
+                        <div className="mt-2 text-sm text-slate-300">
+                          {(event.event_date || event.date) && (
+                            <span>{formatDateTime(event.event_date || event.date!, event.start_time)}</span>
+                          )}
+                          {(event.event_date || event.date) && event.location && <span> </span>}
+                          {event.location && <span>{event.location}</span>}
+                        </div>
+                      )}
+
+                      {/* by Organizer */}
+                      {event.community_owner_name && (
+                        <div className="text-sm text-slate-400">by {event.community_owner_name}</div>
+                      )}
+
+                      {/* Rating */}
+                      {event.avg_rating && (
+                        <div className="text-sm text-amber-400">
+                          <svg className="inline w-4 h-4 -mt-0.5 mr-1" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                          </svg>
+                          {event.avg_rating}
+                        </div>
+                      )}
+
+                      {/* Attendees */}
+                      {(event.attendee_count ?? 0) > 0 && (
+                        <div className="text-sm text-slate-400">{event.attendee_count} attendees</div>
+                      )}
+
+                      {/* RSVP badge */}
+                      {rsvpStatus[event.id] === 'attending' && (
+                        <div className="mt-2">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            Going
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </Link>
                 ))}

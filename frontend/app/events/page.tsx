@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Navbar from '../components/Navbar';
 import Chatbot from '../components/Chatbot';
 import Pagination from '../components/Pagination';
@@ -12,7 +12,8 @@ type DateFilter = 'all' | 'today' | 'week' | 'month';
 
 export default function EventsPage() {
   const [events, setEvents] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [rsvpStatus, setRsvpStatus] = useState<Record<number, string>>({});
   const [savedEvents, setSavedEvents] = useState<Set<number>>(new Set());
@@ -26,51 +27,42 @@ export default function EventsPage() {
     setPage(1);
   }, [activeFilter, searchQuery]);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const filterParam = activeFilter !== 'all' ? `filter=${activeFilter}` : '';
-        const searchParam = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : '';
-        const eventsRes = await apiFetch(`/api/events?${filterParam}${searchParam}&limit=${ITEMS_PER_PAGE}&page=${page}`);
-        const eventsData = await eventsRes.json();
-        setEvents(Array.isArray(eventsData) ? eventsData : eventsData.events || []);
-        if (eventsData.totalPages) setTotalPages(eventsData.totalPages);
+  const fetchEvents = useCallback(async () => {
+    setFetching(true);
+    try {
+      const filterParam = activeFilter !== 'all' ? `filter=${activeFilter}` : '';
+      const searchParam = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : '';
+      const eventsRes = await apiFetch(`/api/events?${filterParam}${searchParam}&limit=${ITEMS_PER_PAGE}&page=${page}`);
+      const eventsData = await eventsRes.json();
+      setEvents(Array.isArray(eventsData) ? eventsData : eventsData.events || []);
+      if (eventsData.totalPages) setTotalPages(eventsData.totalPages);
 
-        const meRes = await apiFetch('/api/auth/me');
-        if (meRes.ok) {
-          setIsAuthenticated(true);
-          const rsvpRes = await apiFetch('/api/engagement/rsvp/user');
-          if (rsvpRes.ok) {
-            const rsvpData = await rsvpRes.json();
-            const statusMap: Record<number, string> = {};
-            rsvpData.forEach((item: any) => { statusMap[item.event_id || item.id] = item.status; });
-            setRsvpStatus(statusMap);
-          }
-          const savedRes = await apiFetch('/api/events/my-saved');
-          if (savedRes.ok) {
-            const savedData = await savedRes.json();
-            setSavedEvents(new Set(savedData.map((s: any) => s.id)));
-          }
+      const meRes = await apiFetch('/api/auth/me');
+      if (meRes.ok) {
+        setIsAuthenticated(true);
+        const rsvpRes = await apiFetch('/api/engagement/rsvp/user');
+        if (rsvpRes.ok) {
+          const rsvpData = await rsvpRes.json();
+          const statusMap: Record<number, string> = {};
+          rsvpData.forEach((item: any) => { statusMap[item.event_id || item.id] = item.status; });
+          setRsvpStatus(statusMap);
         }
-        setTotalPages(Math.max(1, Math.ceil((Array.isArray(eventsData) ? eventsData.length : eventsData.total || ITEMS_PER_PAGE) / ITEMS_PER_PAGE)));
-      } catch (err) { console.error('Failed to load events'); }
-      finally { setLoading(false); }
-    };
-    fetchData();
+        const savedRes = await apiFetch('/api/events/my-saved');
+        if (savedRes.ok) {
+          const savedData = await savedRes.json();
+          setSavedEvents(new Set(savedData.map((s: any) => s.id)));
+        }
+      }
+      setTotalPages(Math.max(1, Math.ceil((Array.isArray(eventsData) ? eventsData.length : eventsData.total || ITEMS_PER_PAGE) / ITEMS_PER_PAGE)));
+    } catch (err) { console.error('Failed to load events'); }
+    finally { setInitialLoading(false); setFetching(false); }
   }, [activeFilter, searchQuery, page]);
 
-  const handleRsvp = async (eventId: number, status: 'attending' | 'not_attending') => {
-    const meRes = await apiFetch('/api/auth/me');
-    if (!meRes.ok) { window.location.href = '/login'; return; }
-    try {
-      const res = await apiFetch('/api/engagement/rsvp', {
-        method: 'POST',
-        body: JSON.stringify({ event_id: eventId, status }),
-      });
-      if (res.ok) setRsvpStatus((prev) => ({ ...prev, [eventId]: status }));
-    } catch (err) { console.error('Failed to RSVP'); }
-  };
+  // Debounced fetch for search/filter changes
+  useEffect(() => {
+    const timer = setTimeout(fetchEvents, 300);
+    return () => clearTimeout(timer);
+  }, [fetchEvents]);
 
   const handleSaveEvent = async (eventId: number) => {
     const meRes = await apiFetch('/api/auth/me');
@@ -89,13 +81,22 @@ export default function EventsPage() {
     } catch (err) { console.error('Failed to save event'); }
   };
 
-  const formatDate = (dateStr: string) => {
+  const formatDateTime = (dateStr: string, timeStr?: string) => {
     const d = new Date(dateStr);
-    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  };
-
-  const formatTime = (dateStr: string) => {
-    return new Date(dateStr).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const datePart = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    if (timeStr) {
+      // timeStr is like "17:00" or "17:00:00"
+      const [h, m] = timeStr.split(':').map(Number);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const hour12 = h % 12 || 12;
+      return `${datePart} · ${hour12}:${m.toString().padStart(2, '0')} ${ampm}`;
+    }
+    // Fallback: try to extract time from dateStr
+    try {
+      const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      if (timePart !== '12:00 AM') return `${datePart} · ${timePart}`;
+    } catch {}
+    return datePart;
   };
 
   const filters: { label: string; value: DateFilter }[] = [
@@ -105,7 +106,7 @@ export default function EventsPage() {
     { label: 'This Month', value: 'month' },
   ];
 
-  if (loading) return (
+  if (initialLoading) return (
     <main className="min-h-screen bg-slate-950">
       <Navbar />
       <section className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -158,8 +159,16 @@ export default function EventsPage() {
                 placeholder="Search events..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-xl pl-10 pr-4 py-2.5 text-slate-100 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 transition-all"
+                className="w-full rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-xl pl-10 pr-10 py-2.5 text-slate-100 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 transition-all"
               />
+              {fetching && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <svg className="w-4 h-4 animate-spin text-amber-400" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                </div>
+              )}
             </div>
             <div className="flex gap-1 bg-white/[0.03] backdrop-blur-xl rounded-xl border border-white/10 p-1">
               {filters.map((filter) => (
@@ -217,58 +226,51 @@ export default function EventsPage() {
                   {/* Content */}
                   <div className="p-5">
                     <Link href={`/events/${event.id}`}>
-                      <h3 className="text-lg font-semibold text-slate-100 group-hover:text-amber-400 transition-colors line-clamp-1">
+                      <h3 className="text-lg font-semibold text-slate-100 group-hover:text-amber-400 transition-colors line-clamp-2 leading-snug">
                         {event.title}
                       </h3>
                     </Link>
-                    {event.description && (
-                      <p className="mt-1 text-sm text-slate-400 line-clamp-2">{event.description}</p>
+
+                    {/* Date · Time · Location — one line */}
+                    {(event.event_date || event.location) && (
+                      <div className="mt-2 text-sm text-slate-300">
+                        {event.event_date && <span>{formatDateTime(event.event_date, event.start_time)}</span>}
+                        {event.event_date && event.location && <span> </span>}
+                        {event.location && <span>{event.location}</span>}
+                      </div>
                     )}
 
-                    {/* Date/Location Pills */}
-                    <div className="flex flex-wrap gap-2 mt-3">
-                      {event.event_date && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                          {formatDate(event.event_date)}
-                        </span>
-                      )}
-                      {event.location && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-orange-500/10 text-orange-400 border border-orange-500/20">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                          </svg>
-                          {event.location}
-                        </span>
-                      )}
-                    </div>
+                    {/* by Organizer */}
+                    {event.community_owner_name && (
+                      <div className="text-sm text-slate-400">by {event.community_owner_name}</div>
+                    )}
 
-                    {/* RSVP Buttons */}
-                    <div className="flex gap-2 mt-4 pt-4 border-t border-white/5">
-                      <button
-                        onClick={() => handleRsvp(event.id, 'attending')}
-                        className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
-                          rsvpStatus[event.id] === 'attending'
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            : 'bg-white/5 text-slate-400 border border-white/10 hover:bg-emerald-500/10 hover:text-emerald-400 hover:border-emerald-500/20'
-                        }`}
-                      >
-                        ✓ Attending
-                      </button>
-                      <button
-                        onClick={() => handleRsvp(event.id, 'not_attending')}
-                        className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
-                          rsvpStatus[event.id] === 'not_attending'
-                            ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                            : 'bg-white/5 text-slate-400 border border-white/10 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20'
-                        }`}
-                      >
-                        ✗ Not Going
-                      </button>
-                    </div>
+                    {/* Rating */}
+                    {event.avg_rating && (
+                      <div className="text-sm text-amber-400">
+                        <svg className="inline w-4 h-4 -mt-0.5 mr-1" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                        {event.avg_rating}
+                      </div>
+                    )}
+
+                    {/* Attendees */}
+                    {(event.attendee_count ?? 0) > 0 && (
+                      <div className="text-sm text-slate-400">{event.attendee_count} attendees</div>
+                    )}
+
+                    {/* RSVP badge */}
+                    {rsvpStatus[event.id] === 'attending' && (
+                      <div className="mt-2">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          Going
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

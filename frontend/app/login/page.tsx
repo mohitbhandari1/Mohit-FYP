@@ -50,7 +50,13 @@ export default function LoginPage() {
       }
 
       await refresh();
-      router.push('/');
+
+      // If user hasn't set interests yet, redirect to onboarding
+      if (data.needsOnboarding) {
+        router.push('/onboarding');
+      } else {
+        router.push('/');
+      }
     } catch {
       setError('Something went wrong. Please try again.');
     }

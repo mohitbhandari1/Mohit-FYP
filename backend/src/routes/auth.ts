@@ -67,7 +67,7 @@ router.post('/login', async (req, res, next) => {
   }
 
   try {
-    const result = await query('SELECT id, name, email, password, role FROM users WHERE email = $1', [email]);
+    const result = await query('SELECT id, name, email, password, role, interests FROM users WHERE email = $1', [email]);
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -99,10 +99,14 @@ router.post('/login', async (req, res, next) => {
     // Set httpOnly cookie (secure, persists across browser sessions)
     setTokenCookie(res, token);
 
+    // Check if user needs onboarding (no interests set yet)
+    const needsOnboarding = !user.interests || user.interests.trim() === '';
+
     res.json({
       token,
       user: { id: user.id, name: user.name, email: user.email, role: user.role },
       needsPasswordChange,
+      needsOnboarding,
     });
   } catch (error) {
     next(error);
