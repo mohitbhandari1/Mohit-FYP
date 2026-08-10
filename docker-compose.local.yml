@@ -82,6 +82,12 @@ services:
     command: ["npm", "run", "seed"]
     profiles:
       - seed
+    volumes:
+      # Run the CURRENT seed script + source (no image rebuild needed).
+      # Without this, `run --rm seed` executes whatever seed.ts was baked
+      # into the image - stale images caused duplicate-key seed failures.
+      - ./backend/scripts:/app/scripts
+      - ./backend/src:/app/src
 
   # ─── 4. Frontend (Next.js 14) ───
   frontend:

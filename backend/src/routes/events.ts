@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import * as XLSX from 'xlsx';
 import { query } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 
@@ -36,6 +37,70 @@ const uploadEventImage = multer({
   },
 });
 
+// Computed column: how many seats are still open (null when unlimited)
+const SEATS_REMAINING = `CASE WHEN e.max_attendees IS NULL THEN NULL ELSE GREATEST(e.max_attendees - e.attendee_count, 0) END AS seats_remaining`;
+
+// ─── Custom registration questions ───────────────────────────────────────
+
+interface EventQuestion {
+  question: string;
+  type: 'text' | 'textarea' | 'select';
+  required: boolean;
+  options: string[];
+  sort_order: number;
+}
+
+/** Parses the `questions` JSON array sent by the create/edit forms. */
+function parseQuestions(raw: any): EventQuestion[] {
+  if (!raw) return [];
+  let arr = raw;
+  if (typeof raw === 'string') {
+    try {
+      arr = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter((q) => q && typeof q.question === 'string' && q.question.trim())
+    .map((q, i) => ({
+      question: q.question.trim(),
+      type: ['text', 'textarea', 'select'].includes(q.type) ? q.type : 'text',
+      required: !!q.required,
+      options: Array.isArray(q.options) ? q.options.map(String).filter(Boolean) : [],
+      sort_order: i,
+    }));
+}
+
+/** Replaces all custom registration questions for an event. */
+async function replaceEventQuestions(eventId: number, rawQuestions: any): Promise<void> {
+  const questions = parseQuestions(rawQuestions);
+  await query('DELETE FROM event_questions WHERE event_id = $1', [eventId]);
+  for (const q of questions) {
+    await query(
+      `INSERT INTO event_questions (event_id, question, type, required, options, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [eventId, q.question, q.type, q.required, q.options.length > 0 ? JSON.stringify(q.options) : null, q.sort_order]
+    );
+  }
+}
+
+/** Loads custom registration questions for an event (ordered). */
+async function getEventQuestions(eventId: number) {
+  const result = await query(
+    'SELECT id, question, type, required, options, sort_order FROM event_questions WHERE event_id = $1 ORDER BY sort_order ASC, id ASC',
+    [eventId]
+  );
+  return result.rows.map((r: any) => ({
+    id: r.id,
+    question: r.question,
+    type: r.type,
+    required: r.required,
+    options: typeof r.options === 'string' ? JSON.parse(r.options) : r.options || [],
+  }));
+}
+
 // GET /api/events - List events with filtering
 router.get('/', async (req, res, next) => {
   const communityId = req.query.communityId ? Number(req.query.communityId) : undefined;
@@ -52,6 +117,7 @@ router.get('/', async (req, res, next) => {
   try {
     let sql = `SELECT e.id, e.title, e.description, e.event_date, e.start_time, e.end_date, e.end_time,
               e.location, e.event_type, e.community_id, e.attendee_count, e.max_attendees,
+              ${SEATS_REMAINING},
               e.banner_image, e.topics, e.payment_type, e.duration,
               c.name as community_name, c.owner_id, c.logo as community_logo,
               u.name as community_owner_name,
@@ -112,6 +178,7 @@ router.get('/upcoming', async (req, res, next) => {
     const result = await query(
       `SELECT e.id, e.title, e.description, e.event_date, e.start_time, e.location,
               e.event_type, e.community_id, e.attendee_count, e.max_attendees,
+              ${SEATS_REMAINING},
               e.banner_image, e.topics, e.payment_type,
               c.name as community_name, c.logo as community_logo,
               u.name as community_owner_name,
@@ -134,7 +201,7 @@ router.get('/my-saved', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     const result = await query(
       `SELECT e.id, e.title, e.description, e.event_date, e.location, e.banner_image,
-              e.community_id, e.attendee_count, e.max_attendees, e.event_type, e.start_time,
+              e.community_id, e.attendee_count, e.max_attendees, ${SEATS_REMAINING}, e.event_type, e.start_time,
               c.name as community_name,
               u.name as community_owner_name,
               (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE event_id = e.id) as avg_rating
@@ -158,6 +225,7 @@ router.get('/organizer', authMiddleware, async (req: AuthRequest, res, next) => 
     const result = await query(
       `SELECT e.id, e.title, e.description, e.event_date, e.start_time, e.end_date, e.end_time,
               e.location, e.event_type, e.community_id, e.attendee_count, e.max_attendees,
+              ${SEATS_REMAINING},
               e.banner_image, e.topics, e.payment_type,
               c.name as community_name
        FROM events e
@@ -181,7 +249,8 @@ router.get('/:id', async (req, res, next) => {
 
   try {
     const result = await query(
-      `SELECT e.*, c.name as community_name, c.owner_id as community_owner_id,
+      `SELECT e.*, ${SEATS_REMAINING},
+              c.name as community_name, c.owner_id as community_owner_id,
               c.logo as community_logo, c.banner_image as community_banner,
               c.description as community_description, c.category as community_category,
               c.member_count as community_member_count,
@@ -195,7 +264,10 @@ router.get('/:id', async (req, res, next) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Event not found' });
     }
-    res.json(result.rows[0]);
+    const eventData = result.rows[0];
+    // Attach custom registration questions
+    eventData.questions = await getEventQuestions(eventId);
+    res.json(eventData);
   } catch (error) {
     next(error);
   }
@@ -207,7 +279,7 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
     community_id, title, description, event_date, start_time, end_date, end_time,
     duration, location, event_type, max_attendees, allow_guests,
     guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
-    agenda, requirements, instructions
+    agenda, requirements, instructions, questions
   } = req.body;
 
   if (!community_id || !title || !description || !event_date) {
@@ -244,6 +316,9 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
        agenda || null, requirements || null, instructions || null]
     );
 
+    // Save custom registration questions (seat limit lives in max_attendees)
+    await replaceEventQuestions(result.rows[0].id, questions);
+
     // Log activity
     const user = await query('SELECT name FROM users WHERE id = $1', [req.userId]);
     await query(
@@ -251,7 +326,12 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
       [req.userId, user.rows[0]?.name || '', 'event_created', `Created event: ${title} in community #${community_id}`]
     );
 
-    res.status(201).json(result.rows[0]);
+    const created = result.rows[0];
+    created.questions = await getEventQuestions(created.id);
+    created.seats_remaining = created.max_attendees != null
+      ? Math.max(Number(created.max_attendees) - (created.attendee_count || 0), 0)
+      : null;
+    res.status(201).json(created);
   } catch (error) {
     next(error);
   }
@@ -264,7 +344,7 @@ router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), asyn
     title, description, event_date, start_time, end_date, end_time,
     duration, location, event_type, max_attendees, allow_guests,
     guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
-    agenda, requirements, instructions
+    agenda, requirements, instructions, questions
   } = req.body;
 
   try {
@@ -311,7 +391,19 @@ router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), asyn
        hosts || null, speakers || null, agenda || null, requirements || null, instructions || null,
        eventId]
     );
-    res.json(result.rows[0]);
+
+    // Save custom registration questions — only when the organizer sent them
+    // (so a seat-limit-only edit never wipes existing questions)
+    if (questions !== undefined) {
+      await replaceEventQuestions(eventId, questions);
+    }
+
+    const updated = result.rows[0];
+    updated.questions = await getEventQuestions(eventId);
+    updated.seats_remaining = updated.max_attendees != null
+      ? Math.max(Number(updated.max_attendees) - (updated.attendee_count || 0), 0)
+      : null;
+    res.json(updated);
   } catch (error) {
     next(error);
   }
@@ -391,6 +483,86 @@ router.get('/:id/attendees', async (req, res, next) => {
       [eventId]
     );
     res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/events/:id/export - Download attendee list as XLSX (organizer/admin only)
+router.get('/:id/export', authMiddleware, async (req: AuthRequest, res, next) => {
+  const eventId = Number(req.params.id);
+  try {
+    // Only the community owner (organizer) or an admin can export
+    const eventRes = await query(
+      `SELECT e.id, e.title, c.owner_id
+       FROM events e JOIN communities c ON e.community_id = c.id
+       WHERE e.id = $1 AND e.deleted_at IS NULL AND c.deleted_at IS NULL`,
+      [eventId]
+    );
+    if (eventRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    if (eventRes.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Not authorized to export this event' });
+    }
+
+    const questions = await query(
+      'SELECT id, question FROM event_questions WHERE event_id = $1 ORDER BY sort_order ASC, id ASC',
+      [eventId]
+    );
+    const rsvpRes = await query(
+      `SELECT r.status, r.full_name, r.phone, r.email, r.answers, r.created_at,
+              u.name as user_name, u.email as user_email
+       FROM rsvps r JOIN users u ON r.user_id = u.id
+       WHERE r.event_id = $1
+       ORDER BY r.created_at ASC`,
+      [eventId]
+    );
+
+    const header = ['Name', 'Email', 'Phone', 'Status', 'RSVP Date', ...questions.rows.map((q: any) => q.question)];
+    const rows = rsvpRes.rows.map((r: any) => {
+      const answers: Record<string, any> = r.answers || {};
+      return [
+        r.full_name || r.user_name || '',
+        r.email || r.user_email || '',
+        r.phone || '',
+        r.status === 'attending' ? 'Attending' : 'Not attending',
+        r.created_at ? new Date(r.created_at).toLocaleString() : '',
+        ...questions.rows.map((q: any) => answers[String(q.id)] ?? answers[q.question] ?? ''),
+      ];
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    ws['!cols'] = header.map((h) => ({ wch: Math.max(h.length + 2, 14) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Attendees');
+
+    // Second sheet: the community's member/follower list (organizer/manager only —
+    // this whole route is gated to owner/admin above)
+    const members = await query(
+      `SELECT u.name, u.email, u.role, cm.joined_at
+       FROM community_members cm JOIN users u ON cm.user_id = u.id
+       WHERE cm.community_id = (SELECT community_id FROM events WHERE id = $1)
+       ORDER BY cm.joined_at ASC`,
+      [eventId]
+    );
+    const mHeader = ['Name', 'Email', 'Role', 'Joined Date'];
+    const mRows = members.rows.map((m: any) => [
+      m.name || '',
+      m.email || '',
+      m.role || 'member',
+      m.joined_at ? new Date(m.joined_at).toLocaleString() : '',
+    ]);
+    const wsMembers = XLSX.utils.aoa_to_sheet([mHeader, ...mRows]);
+    wsMembers['!cols'] = mHeader.map((h) => ({ wch: Math.max(h.length + 2, 14) }));
+    XLSX.utils.book_append_sheet(wb, wsMembers, 'Community Members');
+
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    const filename = `${eventRes.rows[0].title.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_')}_attendees.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
   } catch (error) {
     next(error);
   }

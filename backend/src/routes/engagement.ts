@@ -8,7 +8,7 @@ const router = express.Router();
 
 // POST /api/engagement/rsvp - RSVP to an event (attending/not_attending)
 router.post('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
-  const { event_id, status, full_name, phone, email } = req.body;
+  const { event_id, status, full_name, phone, email, answers } = req.body;
   if (!event_id) {
     return res.status(400).json({ error: 'event_id is required' });
   }
@@ -19,34 +19,80 @@ router.post('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
   }
 
   try {
-    // Check if event exists
-    const eventCheck = await query('SELECT id, community_id, title FROM events WHERE id = $1 AND deleted_at IS NULL', [event_id]);
+    // Check if event exists (include seat capacity)
+    const eventCheck = await query(
+      'SELECT id, community_id, title, max_attendees, attendee_count FROM events WHERE id = $1 AND deleted_at IS NULL',
+      [event_id]
+    );
     if (eventCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Event not found' });
     }
+    const event = eventCheck.rows[0];
 
     // Check previous RSVP status before upsert
     const prevRsvp = await query(
-      'SELECT status FROM rsvps WHERE user_id = $1 AND event_id = $2',
+      'SELECT status, answers FROM rsvps WHERE user_id = $1 AND event_id = $2',
       [req.userId, event_id]
     );
     const prevStatus = prevRsvp.rows[0]?.status;
 
+    // ─── Validate answers for required registration questions ───
+    // (Must run BEFORE claiming a seat — a rejected RSVP must not take a seat.)
+    const questions = await query(
+      'SELECT id, question, required FROM event_questions WHERE event_id = $1 ORDER BY sort_order ASC, id ASC',
+      [event_id]
+    );
+    const answerMap: Record<string, any> =
+      answers && typeof answers === 'object' && !Array.isArray(answers) ? answers : {};
+    for (const q of questions.rows) {
+      if (q.required) {
+        const value = answerMap[String(q.id)] ?? '';
+        if (typeof value !== 'string' || !value.trim()) {
+          return res.status(400).json({
+            error: `"${q.question}" is required`,
+            message: `Please answer the required question: ${q.question}`,
+          });
+        }
+      }
+    }
+
+    // ─── Seat limit / capacity check (atomic — prevents oversubscription) ───
+    if (rsvpStatus === 'attending' && prevStatus !== 'attending') {
+      const claim = await query(
+        `UPDATE events SET attendee_count = attendee_count + 1
+         WHERE id = $1 AND (max_attendees IS NULL OR attendee_count < max_attendees)`,
+        [event_id]
+      );
+      if (claim.rowCount === 0) {
+        return res.status(400).json({
+          error: 'This event is full',
+          message: `Sorry, all ${event.max_attendees} seats are taken. Stay connected for future events — new events from this community will appear soon!`,
+        });
+      }
+    }
+    // Only keep answers for questions that actually exist on this event.
+    // Stored only when attending — switching to not_attending never wipes prior answers.
+    const answersJson = rsvpStatus === 'attending' && questions.rows.length > 0
+      ? JSON.stringify(Object.fromEntries(
+          questions.rows.map((q: any) => [String(q.id), answerMap[String(q.id)] ?? ''])
+        ))
+      : null;
+
     const result = await query(
-      `INSERT INTO rsvps (user_id, event_id, status, full_name, phone, email)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO rsvps (user_id, event_id, status, full_name, phone, email, answers)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_id, event_id)
-       DO UPDATE SET status = $3, full_name = COALESCE($4, rsvps.full_name), phone = COALESCE($5, rsvps.phone), email = COALESCE($6, rsvps.email)
+       DO UPDATE SET status = $3, full_name = COALESCE($4, rsvps.full_name), phone = COALESCE($5, rsvps.phone), email = COALESCE($6, rsvps.email),
+         answers = CASE WHEN $7::jsonb IS NULL THEN rsvps.answers ELSE $7::jsonb END
        RETURNING id, user_id, event_id, status`,
-      [req.userId, event_id, rsvpStatus, full_name || null, phone || null, email || null]
+      [req.userId, event_id, rsvpStatus, full_name || null, phone || null, email || null, answersJson]
     );
 
-    // Update attendee_count based on status change
+    // Update attendee_count based on status change.
+    // (The +1 for attending was already claimed atomically above.)
     const newStatus = result.rows[0]?.status;
     if (prevStatus !== newStatus) {
       if (newStatus === 'attending') {
-        await query('UPDATE events SET attendee_count = attendee_count + 1 WHERE id = $1', [event_id]);
-
         // Auto-join the community when user attends an event
         const communityId = eventCheck.rows[0].community_id;
         if (communityId) {
@@ -111,12 +157,25 @@ router.delete('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
   }
 });
 
-// GET /api/engagement/rsvp/event/:eventId - Get RSVPs for an event
-router.get('/rsvp/event/:eventId', async (req, res, next) => {
+// GET /api/engagement/rsvp/event/:eventId - Get RSVPs for an event (organizer/admin only)
+router.get('/rsvp/event/:eventId', authMiddleware, async (req: AuthRequest, res, next) => {
   const eventId = Number(req.params.eventId);
   try {
+    // Only the community owner (organizer) or an admin can view contact details
+    const eventCheck = await query(
+      `SELECT e.id, c.owner_id FROM events e JOIN communities c ON e.community_id = c.id
+       WHERE e.id = $1 AND e.deleted_at IS NULL AND c.deleted_at IS NULL`,
+      [eventId]
+    );
+    if (eventCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    if (eventCheck.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Not authorized to view RSVPs' });
+    }
+
     const result = await query(
-      `SELECT r.user_id, r.status, r.full_name, r.phone, r.email, r.created_at, u.name, u.avatar_url
+      `SELECT r.user_id, r.status, r.full_name, r.phone, r.email, r.answers, r.created_at, u.name, u.avatar_url
        FROM rsvps r JOIN users u ON r.user_id = u.id
        WHERE r.event_id = $1
        ORDER BY r.created_at DESC`,
@@ -185,13 +244,20 @@ router.post('/review', authMiddleware, async (req: AuthRequest, res, next) => {
       [req.userId, community_id || null, event_id || null]
     );
 
+    // Reviewer info is attached to the response so the UI can show name + avatar immediately
+    const user = await query('SELECT name, avatar_url FROM users WHERE id = $1', [req.userId]);
+    const reviewer = {
+      user_name: user.rows[0]?.name || '',
+      avatar_url: user.rows[0]?.avatar_url || null,
+    };
+
     if (existing.rows.length > 0) {
       // Update existing review
       const result = await query(
         'UPDATE reviews SET rating = $1, comment = $2 WHERE id = $3 RETURNING id, rating, comment, created_at',
         [rating, comment || null, existing.rows[0].id]
       );
-      return res.json(result.rows[0]);
+      return res.json({ ...result.rows[0], ...reviewer });
     }
 
     const result = await query(
@@ -200,14 +266,13 @@ router.post('/review', authMiddleware, async (req: AuthRequest, res, next) => {
     );
 
     // Log activity
-    const user = await query('SELECT name FROM users WHERE id = $1', [req.userId]);
     const target = community_id ? `community #${community_id}` : `event #${event_id}`;
     await query(
       'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
-      [req.userId, user.rows[0]?.name || '', 'review_created', `Left a ${rating}-star review on ${target}`]
+      [req.userId, reviewer.user_name, 'review_created', `Left a ${rating}-star review on ${target}`]
     );
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json({ ...result.rows[0], ...reviewer });
   } catch (error) {
     next(error);
   }
@@ -389,10 +454,21 @@ router.post('/community/leave/:communityId', authMiddleware, async (req: AuthReq
   }
 });
 
-// GET /api/engagement/community/members/:communityId - Get community members list
-router.get('/community/members/:communityId', async (req, res, next) => {
+// GET /api/engagement/community/members/:communityId - Get community members list (organizer/manager only)
+router.get('/community/members/:communityId', authMiddleware, async (req: AuthRequest, res, next) => {
   const communityId = Number(req.params.communityId);
   try {
+    const community = await query(
+      'SELECT owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL',
+      [communityId]
+    );
+    if (community.rows.length === 0) {
+      return res.status(404).json({ error: 'Community not found' });
+    }
+    if (community.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Only the community organizer/manager can view the member list' });
+    }
+
     const result = await query(
       `SELECT u.id, u.name, u.email, u.avatar_url, u.role, cm.joined_at
        FROM community_members cm

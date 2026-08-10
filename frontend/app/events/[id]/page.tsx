@@ -26,22 +26,41 @@ export default function EventDetailPage() {
   const [isSaved, setIsSaved] = useState(false);
   const [showSharePopup, setShowSharePopup] = useState(false);
   const [attendeeCount, setAttendeeCount] = useState(0);
+  const [seatsLeft, setSeatsLeft] = useState<number | null>(null);
+  const [attendees, setAttendees] = useState<any[]>([]);
+  const [attendeesError, setAttendeesError] = useState('');
+  // RSVP custom questions
+  const [showRsvpQuestions, setShowRsvpQuestions] = useState(false);
+  const [rsvpAnswers, setRsvpAnswers] = useState<Record<string, string>>({});
+  const [rsvpError, setRsvpError] = useState('');
+  const [submittingRsvp, setSubmittingRsvp] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [showFullWarning, setShowFullWarning] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const [eventRes, reviewsRes] = await Promise.all([
           apiFetch(`/api/events/${id}`),
-          apiFetch(`/api/engagement/review/event/${id}`),
+          // no-store → always fetch the latest reviewer name/avatar (profile updates show here)
+          apiFetch(`/api/engagement/review/event/${id}`, { cache: 'no-store' }),
         ]);
         if (eventRes.ok) {
           const eventData = await eventRes.json();
           setEvent(eventData);
           setAttendeeCount(eventData.attendee_count || eventData.attendees?.length || 0);
+          setSeatsLeft(
+            eventData.seats_remaining != null
+              ? eventData.seats_remaining
+              : eventData.max_attendees != null
+                ? Math.max(Number(eventData.max_attendees) - (eventData.attendee_count || 0), 0)
+                : null
+          );
 
           const meRes = await apiFetch('/api/auth/me');
           if (meRes.ok) {
             setIsAuthenticated(true);
+            const me = await meRes.json();
             const rsvpRes = await apiFetch('/api/engagement/rsvp/user');
             if (rsvpRes.ok) {
               const rsvpData = await rsvpRes.json();
@@ -50,27 +69,88 @@ export default function EventDetailPage() {
             }
             const savedRes = await apiFetch(`/api/events/${id}/saved`);
             if (savedRes.ok) { const savedData = await savedRes.json(); setIsSaved(savedData.saved); }
+
+            // Organizer (community owner) sees who joined + answers
+            if (me.id === eventData.community_owner_id || me.role === 'admin') {
+              const attRes = await apiFetch(`/api/engagement/rsvp/event/${id}`);
+              if (attRes.ok) setAttendees(await attRes.json());
+            }
           }
         } else { router.push('/events'); }
-        if (reviewsRes.ok) setReviews(await reviewsRes.json());
+        if (reviewsRes.ok) {
+          // API returns { reviews: [...], avg_rating, total_reviews } — extract the array
+          const reviewData = await reviewsRes.json();
+          setReviews(Array.isArray(reviewData) ? reviewData : (reviewData?.reviews || []));
+        }
       } catch (err) { console.error('Error fetching event details'); }
       finally { setLoading(false); }
     };
     fetchData();
   }, [id, router]);
 
-  const handleRsvp = async (status: 'attending' | 'not_attending') => {
+  const handleRsvp = (status: 'attending' | 'not_attending') => {
     if (!isAuthenticated) { router.push('/login'); return; }
+    setRsvpError('');
+    // Event is full → show the friendly warning instead of attempting RSVP
+    if (status === 'attending' && isFull && rsvpStatus !== 'attending') {
+      setShowFullWarning(true);
+      return;
+    }
+    // Attending an event with custom registration questions → ask them first
+    if (status === 'attending' && event?.questions?.length > 0) {
+      setRsvpAnswers({});
+      setShowRsvpQuestions(true);
+      return;
+    }
+    submitRsvp(status, {});
+  };
+
+  const submitRsvp = async (status: 'attending' | 'not_attending', answers: Record<string, string>) => {
+    setSubmittingRsvp(true);
+    setRsvpError('');
     try {
       const res = await apiFetch('/api/engagement/rsvp', {
         method: 'POST',
-        body: JSON.stringify({ event_id: parseInt(id), status }),
+        body: JSON.stringify({ event_id: parseInt(id), status, answers }),
       });
+      const data = await res.json().catch(() => null);
       if (res.ok) {
+        // Only adjust counters when the status actually changed
+        // (re-clicking the same status is a no-op on the backend)
+        const statusChanged = rsvpStatus !== status;
         setRsvpStatus(status);
-        setAttendeeCount((prev) => status === 'attending' ? prev + 1 : Math.max(0, prev - 1));
+        if (statusChanged) {
+          setAttendeeCount((prev) => status === 'attending' ? prev + 1 : Math.max(0, prev - 1));
+          if (status === 'attending' && seatsLeft != null) setSeatsLeft((prev) => prev == null ? null : Math.max(0, prev - 1));
+        }
+        setShowRsvpQuestions(false);
+      } else {
+        setRsvpError(data?.message || data?.error || 'Failed to RSVP');
       }
-    } catch (err) { console.error('Failed to RSVP'); }
+    } catch (err) { setRsvpError('Failed to RSVP. Please try again.'); }
+    finally { setSubmittingRsvp(false); }
+  };
+
+  const handleDownloadAttendees = async () => {
+    setDownloading(true);
+    try {
+      const res = await apiFetch(`/api/events/${id}/export`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        setAttendeesError(err?.error || 'Failed to download');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(event?.title || 'event').replace(/[^\w\s-]/g, '')}_attendees.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch { setAttendeesError('Failed to download'); }
+    finally { setDownloading(false); }
   };
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
@@ -83,7 +163,7 @@ export default function EventDetailPage() {
       });
       if (res.ok) {
         const newReview = await res.json();
-        setReviews((prev) => [newReview, ...prev]);
+        setReviews((prev) => [newReview, ...(Array.isArray(prev) ? prev : [])]);
         setShowReviewForm(false);
         setReviewForm({ rating: 5, comment: '' });
       }
@@ -116,7 +196,8 @@ export default function EventDetailPage() {
 
   if (!event) return null;
 
-  const isOwner = user && (user.id === event.owner_id || user.id === event.organizer_id);
+  const isOwner = user && (user.id === event.community_owner_id || user.role === 'admin');
+  const isFull = event.max_attendees != null && seatsLeft != null && seatsLeft <= 0;
 
   return (
     <main className="min-h-screen bg-slate-950">
@@ -189,7 +270,14 @@ export default function EventDetailPage() {
                 </svg>
               </div>
               <p className="text-xs text-slate-500 mb-1">Attendees</p>
-              <p className="text-sm font-medium text-slate-200">{attendeeCount}</p>
+              <p className="text-sm font-medium text-slate-200">
+                {attendeeCount}{event.max_attendees ? ` / ${event.max_attendees}` : ''}
+              </p>
+              {seatsLeft != null && (
+                <p className={`mt-1 text-xs font-semibold ${isFull ? 'text-red-400' : seatsLeft <= 10 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  {isFull ? 'Event Full' : `${seatsLeft} seat${seatsLeft === 1 ? '' : 's'} left`}
+                </p>
+              )}
             </div>
           </div>
 
@@ -213,6 +301,75 @@ export default function EventDetailPage() {
                   </div>
                 )}
               </div>
+
+              {/* Who's Coming — organizer only */}
+              {isOwner && (
+                <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h2 className="text-xl font-semibold text-slate-100">Who&apos;s Coming</h2>
+                      <p className="text-sm text-slate-400 mt-0.5">{attendees.length} response{attendees.length === 1 ? '' : 's'}</p>
+                    </div>
+                    <button onClick={handleDownloadAttendees} disabled={downloading}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-sm font-medium hover:bg-emerald-500/25 transition-all disabled:opacity-50">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      {downloading ? 'Downloading...' : 'Download XLSX'}
+                    </button>
+                  </div>
+
+                  {attendeesError && (
+                    <div className="mb-3 p-3 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-xs">{attendeesError}</div>
+                  )}
+
+                  {attendees.length === 0 ? (
+                    <p className="text-sm text-slate-500 text-center py-4">No RSVPs yet.</p>
+                  ) : (
+                    <div className="divide-y divide-white/5">
+                      {attendees.map((att: any) => (
+                        <div key={att.user_id || att.id} className="py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              {att.avatar_url ? (
+                                <img src={`${BACKEND_URL}${att.avatar_url}`} alt="" className="w-8 h-8 rounded-full object-cover" />
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center flex-shrink-0">
+                                  <span className="text-xs font-semibold text-amber-400">{(att.name || '?').charAt(0).toUpperCase()}</span>
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-slate-200 truncate">{att.full_name || att.name}</p>
+                                <p className="text-xs text-slate-500 truncate">{(att.email || '')}</p>
+                              </div>
+                            </div>
+                            <span className={`flex-shrink-0 text-xs font-medium px-2.5 py-1 rounded-full ${
+                              att.status === 'attending'
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                            }`}>
+                              {att.status === 'attending' ? 'Attending' : 'Not attending'}
+                            </span>
+                          </div>
+                          {att.phone && <p className="text-xs text-slate-500 mt-1 ml-11">📞 {att.phone}</p>}
+                          {event.questions?.length > 0 && att.answers && (
+                            <div className="ml-11 mt-1 space-y-0.5">
+                              {event.questions.map((q: any) => {
+                                const val = att.answers[String(q.id)] ?? att.answers[q.question] ?? '';
+                                return val ? (
+                                  <p key={q.id} className="text-xs text-slate-400">
+                                    <span className="text-slate-500">{q.question}:</span> {val}
+                                  </p>
+                                ) : null;
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Reviews Section */}
               <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-6">
@@ -272,27 +429,52 @@ export default function EventDetailPage() {
                   </form>
                 )}
 
-                {/* Reviews List */}
-                <div className="space-y-4">
-                  {reviews.length > 0 ? reviews.map((review: any, i: number) => (
-                    <div key={i} className="p-4 rounded-xl border border-white/5 bg-white/[0.01]">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium text-slate-200">{review.user_name || 'Anonymous'}</span>
-                        <div className="flex">
-                          {[1, 2, 3, 4, 5].map((star) => (
-                            <svg key={star} className={`w-3.5 h-3.5 ${star <= review.rating ? 'text-amber-400' : 'text-slate-700'}`}
-                              fill="currentColor" viewBox="0 0 20 20">
-                              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                            </svg>
-                          ))}
+                {/* Reviews List — 3 cards per row */}
+                {reviews.length > 0 ? (
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {reviews.map((review: any, i: number) => (
+                      <div key={review.id || i} className="p-5 rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl flex flex-col transition-all hover:border-amber-500/20 hover:bg-white/[0.04]">
+                        <div className="flex items-center gap-3 mb-3">
+                          {review.avatar_url ? (
+                            <img src={`${BACKEND_URL}${review.avatar_url}`} alt={review.name || 'Reviewer'}
+                              className="w-10 h-10 rounded-full object-cover border border-white/10 flex-shrink-0" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-white/10 flex items-center justify-center flex-shrink-0">
+                              <span className="text-sm font-semibold text-amber-300">
+                                {(review.name || review.user_name || 'U').charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-slate-200 truncate">{review.name || review.user_name || 'Anonymous'}</p>
+                            <div className="flex mt-0.5">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <svg key={star} className={`w-3.5 h-3.5 ${star <= review.rating ? 'text-amber-400' : 'text-slate-700'}`}
+                                  fill="currentColor" viewBox="0 0 20 20">
+                                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                </svg>
+                              ))}
+                            </div>
+                          </div>
                         </div>
+                        <div className="flex-1">
+                          {review.comment ? (
+                            <p className="text-sm text-slate-400 leading-relaxed">{review.comment}</p>
+                          ) : (
+                            <p className="text-sm text-slate-600 italic">No comment.</p>
+                          )}
+                        </div>
+                        {review.created_at && (
+                          <div className="mt-3 pt-3 border-t border-white/5 text-xs text-slate-500">
+                            {new Date(review.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                          </div>
+                        )}
                       </div>
-                      {review.comment && <p className="text-sm text-slate-400">{review.comment}</p>}
-                    </div>
-                  )) : (
-                    <p className="text-sm text-slate-500 text-center py-4">No reviews yet. Be the first to review!</p>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500 text-center py-4">No reviews yet. Be the first to review!</p>
+                )}
               </div>
             </div>
 
@@ -301,16 +483,59 @@ export default function EventDetailPage() {
               {/* RSVP Card */}
               <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-6 sticky top-24">
                 <h3 className="text-lg font-semibold text-slate-100 mb-4">RSVP</h3>
+
+                {/* Seats remaining bar */}
+                {event.max_attendees != null && (
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between text-xs mb-1.5">
+                      <span className="text-slate-400">Seats remaining</span>
+                      <span className={`font-semibold ${isFull ? 'text-red-400' : 'text-amber-400'}`}>
+                        {isFull ? '0' : seatsLeft} / {event.max_attendees}
+                      </span>
+                    </div>
+                    <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${isFull ? 'bg-red-500' : 'bg-gradient-to-r from-amber-500 to-orange-500'}`}
+                        style={{ width: `${event.max_attendees > 0 ? Math.min(((event.max_attendees - (seatsLeft ?? 0)) / event.max_attendees) * 100, 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {rsvpError && rsvpStatus !== 'attending' && (
+                  <div className="mb-3 p-3 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-xs">{rsvpError}</div>
+                )}
+
+                {/* Seats full warning */}
+                {isFull && rsvpStatus !== 'attending' && (
+                  <button
+                    onClick={() => setShowFullWarning(true)}
+                    className="w-full mb-4 p-4 rounded-xl border border-red-500/25 bg-red-500/10 text-left transition-all hover:bg-red-500/15"
+                  >
+                    <div className="flex items-start gap-3">
+                      <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <div>
+                        <p className="text-sm font-semibold text-red-400">This event is full!</p>
+                        <p className="text-xs text-red-300/80 mt-0.5">All seats are taken. Stay connected for future events from {event.community_name || 'this community'}.</p>
+                      </div>
+                    </div>
+                  </button>
+                )}
+
                 <div className="space-y-3">
                   <button
                     onClick={() => handleRsvp('attending')}
                     className={`w-full px-4 py-3 rounded-xl font-medium text-sm transition-all ${
                       rsvpStatus === 'attending'
                         ? 'bg-emerald-500/20 text-emerald-400 border-2 border-emerald-500/40 shadow-lg shadow-emerald-500/10'
-                        : 'bg-white/5 text-slate-300 border border-white/10 hover:bg-emerald-500/10 hover:text-emerald-400 hover:border-emerald-500/20'
+                        : isFull
+                          ? 'bg-white/5 text-slate-400 border border-red-500/30 hover:bg-red-500/10 hover:text-red-300'
+                          : 'bg-white/5 text-slate-300 border border-white/10 hover:bg-emerald-500/10 hover:text-emerald-400 hover:border-emerald-500/20'
                     }`}
                   >
-                    ✓ I&apos;m Attending
+                    {isFull ? '✕ Seats Full' : '✓ I&apos;m Attending'}
                   </button>
                   <button
                     onClick={() => handleRsvp('not_attending')}
@@ -357,6 +582,111 @@ export default function EventDetailPage() {
           </div>
         </div>
       </section>
+
+      {/* Seats Full Warning Modal */}
+      {showFullWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" onClick={() => setShowFullWarning(false)} />
+          <div className="relative w-full max-w-md rounded-2xl border border-red-500/25 bg-slate-900 shadow-2xl shadow-black/50 p-6 sm:p-8 text-center animate-scale-in">
+            <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+              <svg className="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-bold text-slate-100 mb-2">Seats are full!</h3>
+            <p className="text-sm text-slate-400 leading-relaxed mb-6">
+              Sorry, all seats for <span className="text-slate-200 font-medium">{event.title}</span> are taken.
+              Stay connected for future events from {event.community_name || 'this community'} — new ones will appear soon!
+            </p>
+            <button
+              onClick={() => setShowFullWarning(false)}
+              className="w-full px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-semibold shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 transition-all"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* RSVP Questions Modal */}
+      {showRsvpQuestions && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" onClick={() => !submittingRsvp && setShowRsvpQuestions(false)} />
+          <div className="relative w-full max-w-lg rounded-2xl border border-white/10 bg-slate-900 shadow-2xl shadow-black/50 max-h-[85vh] overflow-y-auto animate-scale-in">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-lg font-semibold text-slate-100">Almost there! 🎉</h3>
+                <button onClick={() => !submittingRsvp && setShowRsvpQuestions(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <p className="text-sm text-slate-400 mb-5">Please answer a few questions from the organizer to confirm your seat.</p>
+
+              {rsvpError && (
+                <div className="mb-4 p-3 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-xs">{rsvpError}</div>
+              )}
+
+              <div className="space-y-4">
+                {event.questions.map((q: any) => (
+                  <div key={q.id}>
+                    <label className="block text-sm font-medium text-slate-200 mb-1.5">
+                      {q.question}{q.required && <span className="text-red-400 ml-0.5">*</span>}
+                    </label>
+                    {q.type === 'textarea' ? (
+                      <textarea
+                        value={rsvpAnswers[String(q.id)] || ''}
+                        onChange={(e) => setRsvpAnswers((prev) => ({ ...prev, [String(q.id)]: e.target.value }))}
+                        rows={3}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
+                        placeholder="Your answer..."
+                      />
+                    ) : q.type === 'select' ? (
+                      <select
+                        value={rsvpAnswers[String(q.id)] || ''}
+                        onChange={(e) => setRsvpAnswers((prev) => ({ ...prev, [String(q.id)]: e.target.value }))}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-slate-100 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                      >
+                        <option value="" className="bg-slate-900">Select an option...</option>
+                        {(q.options || []).map((opt: string) => (
+                          <option key={opt} value={opt} className="bg-slate-900">{opt}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={rsvpAnswers[String(q.id)] || ''}
+                        onChange={(e) => setRsvpAnswers((prev) => ({ ...prev, [String(q.id)]: e.target.value }))}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        placeholder="Your answer..."
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => submitRsvp('attending', rsvpAnswers)}
+                  disabled={submittingRsvp}
+                  className="flex-1 px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-semibold shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 transition-all disabled:opacity-50"
+                >
+                  {submittingRsvp ? 'Confirming...' : 'Confirm Attendance'}
+                </button>
+                <button
+                  onClick={() => setShowRsvpQuestions(false)}
+                  disabled={submittingRsvp}
+                  className="px-5 py-3 rounded-xl border border-white/10 text-slate-400 font-medium hover:text-slate-200 transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSharePopup && (
         <SharePopup

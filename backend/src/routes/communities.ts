@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import * as XLSX from 'xlsx';
 import { query } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 
@@ -290,10 +291,21 @@ router.delete('/:id', authMiddleware, async (req: AuthRequest, res, next) => {
   }
 });
 
-// GET /api/communities/:id/members - Get community members
-router.get('/:id/members', async (req, res, next) => {
+// GET /api/communities/:id/members - Get community members (organizer/manager only)
+router.get('/:id/members', authMiddleware, async (req: AuthRequest, res, next) => {
   const communityId = Number(req.params.id);
   try {
+    const community = await query(
+      'SELECT owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL',
+      [communityId]
+    );
+    if (community.rows.length === 0) {
+      return res.status(404).json({ error: 'Community not found' });
+    }
+    if (community.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Only the community organizer/manager can view the member list' });
+    }
+
     const result = await query(
       `SELECT u.id, u.name, u.email, u.avatar_url, u.role, cm.joined_at
        FROM community_members cm
@@ -492,6 +504,53 @@ router.get('/:id/sponsors', async (req, res, next) => {
       [communityId]
     );
     res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/communities/:id/export - Download member list as XLSX (owner/admin only)
+router.get('/:id/export', authMiddleware, async (req: AuthRequest, res, next) => {
+  const communityId = Number(req.params.id);
+  try {
+    const community = await query(
+      'SELECT id, name, owner_id FROM communities WHERE id = $1 AND deleted_at IS NULL',
+      [communityId]
+    );
+    if (community.rows.length === 0) {
+      return res.status(404).json({ error: 'Community not found' });
+    }
+    if (community.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Not authorized to export members' });
+    }
+
+    const members = await query(
+      `SELECT u.name, u.email, u.role, cm.joined_at
+       FROM community_members cm
+       JOIN users u ON cm.user_id = u.id
+       WHERE cm.community_id = $1
+       ORDER BY cm.joined_at ASC`,
+      [communityId]
+    );
+
+    const header = ['Name', 'Email', 'Role', 'Joined Date'];
+    const rows = members.rows.map((m: any) => [
+      m.name || '',
+      m.email || '',
+      m.role || 'member',
+      m.joined_at ? new Date(m.joined_at).toLocaleString() : '',
+    ]);
+
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    ws['!cols'] = header.map((h) => ({ wch: Math.max(h.length + 2, 14) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Members');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    const filename = `${community.rows[0].name.replace(/[^\w\s-]/g, '').replace(/\s+/g, '_')}_members.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
   } catch (error) {
     next(error);
   }

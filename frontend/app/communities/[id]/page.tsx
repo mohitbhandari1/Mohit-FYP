@@ -13,7 +13,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { useToast } from '../../components/Toast';
 import { SkeletonDetailPage } from '../../components/Skeleton';
 
-type Tab = 'about' | 'events' | 'reviews' | 'discussions' | 'announcements';
+type Tab = 'about' | 'events' | 'reviews' | 'discussions' | 'announcements' | 'members';
 
 export default function CommunityDetailPage() {
   const params = useParams();
@@ -34,6 +34,9 @@ export default function CommunityDetailPage() {
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [hoverRating, setHoverRating] = useState(0);
   const [showMenu, setShowMenu] = useState(false);
+  const [members, setMembers] = useState<any[]>([]);
+  const [membersError, setMembersError] = useState('');
+  const [downloading, setDownloading] = useState(false);
   const { addToast } = useToast();
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -54,11 +57,16 @@ export default function CommunityDetailPage() {
         const [communityRes, eventsRes, reviewsRes] = await Promise.all([
           apiFetch(`/api/communities/${id}`),
           apiFetch(`/api/communities/${id}/events`),
-          apiFetch(`/api/engagement/review/community/${id}`),
+          // no-store → always fetch the latest reviewer name/avatar (profile updates show here)
+          apiFetch(`/api/engagement/review/community/${id}`, { cache: 'no-store' }),
         ]);
         if (communityRes.ok) setCommunity(await communityRes.json());
         if (eventsRes.ok) setEvents(await eventsRes.json());
-        if (reviewsRes.ok) setReviews(await reviewsRes.json());
+        if (reviewsRes.ok) {
+          // API returns { reviews: [...], avg_rating, total_reviews } — extract the array
+          const reviewData = await reviewsRes.json();
+          setReviews(Array.isArray(reviewData) ? reviewData : (reviewData?.reviews || []));
+        }
 
         if (isAuthenticated) {
           const memberRes = await apiFetch(`/api/communities/${id}/membership`);
@@ -72,6 +80,42 @@ export default function CommunityDetailPage() {
     };
     fetchData();
   }, [id, isAuthenticated]);
+
+  // Load members for the community owner (organizer)
+  const isOwner = user && (user.id === community?.owner_id || user.role === 'admin');
+  useEffect(() => {
+    if (!isOwner) return;
+    const fetchMembers = async () => {
+      try {
+        const res = await apiFetch(`/api/communities/${id}/members`);
+        if (res.ok) setMembers(await res.json());
+      } catch { /* ignore */ }
+    };
+    fetchMembers();
+  }, [id, isOwner]);
+
+  const handleDownloadMembers = async () => {
+    setDownloading(true);
+    setMembersError('');
+    try {
+      const res = await apiFetch(`/api/communities/${id}/export`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        setMembersError(err?.error || 'Failed to download');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(community?.name || 'community').replace(/[^\w\s-]/g, '')}_members.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch { setMembersError('Failed to download'); }
+    finally { setDownloading(false); }
+  };
 
   const handleJoinLeave = async () => {
     if (!isAuthenticated) { router.push('/login'); return; }
@@ -102,17 +146,21 @@ export default function CommunityDetailPage() {
     if (!isAuthenticated) return;
     setSubmittingReview(true);
     try {
-      const res = await apiFetch(`/api/engagement/review/community/${id}`, {
+      const res = await apiFetch('/api/engagement/review', {
         method: 'POST',
-        body: JSON.stringify(reviewForm),
+        body: JSON.stringify({ community_id: parseInt(id), rating: reviewForm.rating, comment: reviewForm.comment }),
       });
       if (res.ok) {
         const newReview = await res.json();
-        setReviews((prev) => [newReview, ...prev]);
+        setReviews((prev) => [newReview, ...(Array.isArray(prev) ? prev : [])]);
         setReviewForm({ rating: 5, comment: '' });
         setShowReviewForm(false);
+        addToast('success', 'Review submitted successfully!');
+      } else {
+        const err = await res.json().catch(() => null);
+        addToast('error', err?.error || 'Failed to submit review');
       }
-    } catch { /* ignore */ }
+    } catch { addToast('error', 'Failed to submit review'); }
     setSubmittingReview(false);
   };
 
@@ -151,6 +199,7 @@ export default function CommunityDetailPage() {
     { id: 'reviews', label: 'Reviews' },
     { id: 'discussions', label: 'Discussions' },
     { id: 'announcements', label: 'Announcements' },
+    ...(isOwner ? [{ id: 'members' as Tab, label: 'Members' }] : []),
   ];
 
   const avgRating = reviews.length > 0
@@ -421,47 +470,58 @@ export default function CommunityDetailPage() {
                   </form>
                 )}
 
-                {/* Reviews list */}
+                {/* Reviews list — 3 cards per row */}
                 {reviews.length === 0 ? (
                   <div className="glass rounded-2xl p-10 text-center">
                     <div className="text-4xl mb-3">⭐</div>
                     <p className="text-slate-400">No reviews yet. Be the first!</p>
                   </div>
                 ) : (
-                  reviews.map((review, i) => (
-                    <div key={review.id || i} className="glass rounded-2xl p-5">
-                      <div className="flex items-center gap-3 mb-3">
-                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-white/10 flex items-center justify-center">
-                          <span className="text-sm font-semibold text-amber-300">
-                            {(review.user_name || review.name || 'U').charAt(0).toUpperCase()}
-                          </span>
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-slate-200">{review.user_name || review.name || 'Anonymous'}</p>
-                          <div className="flex items-center gap-1">
-                            {Array.from({ length: 5 }).map((_, j) => (
-                              <svg
-                                key={j}
-                                className={`w-3.5 h-3.5 ${j < (review.rating || 0) ? 'text-amber-400' : 'text-slate-700'}`}
-                                fill="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                              </svg>
-                            ))}
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {reviews.map((review, i) => (
+                      <div key={review.id || i} className="glass rounded-2xl p-5 flex flex-col transition-all hover:border-amber-500/20 hover:bg-white/[0.04]">
+                        <div className="flex items-center gap-3 mb-3">
+                          {review.avatar_url ? (
+                            <img src={`${BACKEND_URL}${review.avatar_url}`} alt={review.name || 'Reviewer'}
+                              className="w-10 h-10 rounded-full object-cover border border-white/10 flex-shrink-0" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-white/10 flex items-center justify-center flex-shrink-0">
+                              <span className="text-sm font-semibold text-amber-300">
+                                {(review.name || review.user_name || 'U').charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-slate-200 truncate">{review.name || review.user_name || 'Anonymous'}</p>
+                            <div className="flex items-center gap-0.5 mt-0.5">
+                              {Array.from({ length: 5 }).map((_, j) => (
+                                <svg
+                                  key={j}
+                                  className={`w-3.5 h-3.5 ${j < (review.rating || 0) ? 'text-amber-400' : 'text-slate-700'}`}
+                                  fill="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                                </svg>
+                              ))}
+                            </div>
                           </div>
                         </div>
+                        <div className="flex-1">
+                          {review.comment ? (
+                            <p className="text-sm text-slate-300 leading-relaxed">{review.comment}</p>
+                          ) : (
+                            <p className="text-sm text-slate-600 italic">No comment.</p>
+                          )}
+                        </div>
                         {review.created_at && (
-                          <span className="text-xs text-slate-500">
-                            {new Date(review.created_at).toLocaleDateString()}
-                          </span>
+                          <div className="mt-3 pt-3 border-t border-white/5 text-xs text-slate-500">
+                            {new Date(review.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                          </div>
                         )}
                       </div>
-                      {review.comment && (
-                        <p className="text-sm text-slate-300 leading-relaxed">{review.comment}</p>
-                      )}
-                    </div>
-                  ))
+                    ))}
+                  </div>
                 )}
               </div>
             )}
@@ -472,6 +532,55 @@ export default function CommunityDetailPage() {
 
             {activeTab === 'announcements' && (
               <Announcements communityId={parseInt(id)} />
+            )}
+
+            {activeTab === 'members' && isOwner && (
+              <div className="glass rounded-2xl overflow-hidden">
+                <div className="p-6 border-b border-white/5 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-semibold text-slate-100">Members ({members.length})</h2>
+                    <p className="text-sm text-slate-400 mt-0.5">Everyone who has joined this community</p>
+                  </div>
+                  <button onClick={handleDownloadMembers} disabled={downloading}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-sm font-medium hover:bg-emerald-500/25 transition-all disabled:opacity-50">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    {downloading ? 'Downloading...' : 'Download XLSX'}
+                  </button>
+                </div>
+
+                {membersError && (
+                  <div className="p-4 border-b border-white/5">
+                    <div className="p-3 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-xs">{membersError}</div>
+                  </div>
+                )}
+
+                {members.length === 0 ? (
+                  <div className="p-10 text-center">
+                    <p className="text-slate-400">No members have joined yet.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-white/5 max-h-[480px] overflow-y-auto">
+                    {members.map((member: any) => (
+                      <div key={member.id} className="flex items-center justify-between p-4 hover:bg-white/[0.01] transition-colors">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center flex-shrink-0">
+                            <span className="text-sm font-semibold text-amber-400">{member.name?.charAt(0)?.toUpperCase() || '?'}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-slate-200 truncate">{member.name}</p>
+                            <p className="text-xs text-slate-500 truncate">{member.email}</p>
+                          </div>
+                        </div>
+                        <span className="text-xs text-slate-500 flex-shrink-0">
+                          Joined {member.joined_at ? new Date(member.joined_at).toLocaleDateString() : 'N/A'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

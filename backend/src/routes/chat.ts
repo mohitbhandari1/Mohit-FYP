@@ -9,13 +9,206 @@ const router = express.Router();
 // ─── Gemini Setup ───
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
-// ─── Chat Endpoint (single Gemini call per message) ───
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+async function generateWithRetry(model: any, prompt: string): Promise<string> {
+  try {
+    const result = await model.generateContent(prompt);
+    return result.response.text();
+  } catch (firstError: any) {
+    const isRateLimit = firstError.message?.includes('429') || firstError.status === 429;
+    if (isRateLimit) {
+      console.log('Gemini rate limited, quick retry in 2s...');
+      await new Promise(r => setTimeout(r, 2000));
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    }
+    throw firstError;
+  }
+}
+
+/** Parses <action type="..." id="..." name="..." url="..." /> tags out of a reply. */
+function parseActions(response: string): { type: string; id?: number; name: string; url?: string }[] {
+  const actions: { type: string; id?: number; name: string; url?: string }[] = [];
+  const actionRegex = /<action\s+((?:\w+="[^"]*"\s*)*)\/>/gi;
+  let actionMatch;
+  while ((actionMatch = actionRegex.exec(response)) !== null) {
+    const attrs = actionMatch[1];
+    const typeMatch = attrs.match(/type="([^"]+)"/i);
+    const idMatch = attrs.match(/id="([^"]+)"/i);
+    const nameMatch = attrs.match(/name="([^"]+)"/i);
+    const urlMatch = attrs.match(/url="([^"]+)"/i);
+    if (!typeMatch) continue;
+    actions.push({
+      type: typeMatch[1] as any,
+      ...(idMatch ? { id: parseInt(idMatch[1]) } : {}),
+      name: nameMatch?.[1] || '',
+      ...(urlMatch ? { url: urlMatch[1] } : {}),
+    });
+  }
+  return actions;
+}
+
+/**
+ * Builds an interest-aware ORDER BY expression (rank matches first, then fall back).
+ * Never filters rows out — non-matching items just rank lower.
+ */
+function interestRanking(column: string, interests: string, paramStart: number): { orderBy: string; params: string[] } {
+  const parts = (interests || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return { orderBy: '', params: [] };
+  const cases = parts
+    .map((_, i) => `(CASE WHEN ${column} ILIKE $${paramStart + i} THEN 1 ELSE 0 END)`)
+    .join(' + ');
+  return { orderBy: `(${cases}) DESC`, params: parts.map(p => `%${p}%`) };
+}
+
+/**
+ * Predefined SQL for common chat intents. Using these avoids a Gemini call for
+ * the SQL step, so common questions use only ONE Gemini request (free-tier quota friendly).
+ * Returns null when no template matches — then the two-pass flow is used.
+ */
+function detectTemplate(message: string, interests: string): { sql: string; params: any[]; label: string } | null {
+  const m = message.toLowerCase();
+
+  const eventsBase = `SELECT e.id, e.title, e.event_date, e.location, e.description, c.name AS community_name
+    FROM events e JOIN communities c ON e.community_id = c.id
+    WHERE e.deleted_at IS NULL AND c.deleted_at IS NULL`;
+
+  // All events (explicit request for everything/table)
+  if (/(all|every|list|show me|full).*(event|upcoming)/i.test(m) || /table/.test(m)) {
+    return {
+      sql: `${eventsBase} AND e.event_date >= NOW() ORDER BY e.event_date ASC LIMIT 10`,
+      params: [],
+      label: 'events_all',
+    };
+  }
+
+  // Events this month
+  if (/this\s*month|current\s*month|month'?s/.test(m) || /\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b/.test(m)) {
+    return {
+      sql: `${eventsBase} AND e.event_date >= date_trunc('month', NOW()) AND e.event_date < date_trunc('month', NOW()) + INTERVAL '1 month' ORDER BY e.event_date ASC LIMIT 3`,
+      params: [],
+      label: 'events_month',
+    };
+  }
+
+  // Events this week
+  if (/this\s*week|this\s*weekend|next\s*week/.test(m)) {
+    return {
+      sql: `${eventsBase} AND e.event_date >= NOW() AND e.event_date < NOW() + INTERVAL '7 days' ORDER BY e.event_date ASC LIMIT 3`,
+      params: [],
+      label: 'events_week',
+    };
+  }
+
+  // Upcoming events
+  if (/\bupcoming\b|coming\s*(up|soon)|what.*(event|happening|going)/.test(m)) {
+    return {
+      sql: `${eventsBase} AND e.event_date >= NOW() ORDER BY e.event_date ASC LIMIT 3`,
+      params: [],
+      label: 'events_upcoming',
+    };
+  }
+
+  // Recommended events (interest-first)
+  if (/(recommend|suggest).*(event|thing|do)|event.*(recommend|suggest)/.test(m)) {
+    const rank = interestRanking('c.category', interests, 1);
+    const base = `${eventsBase} AND e.event_date >= NOW()`;
+    const sql = rank.orderBy
+      ? `${base} ORDER BY ${rank.orderBy}, e.event_date ASC LIMIT 3`
+      : `${base} ORDER BY e.event_date ASC LIMIT 3`;
+    return { sql, params: rank.params, label: 'events_recommend' };
+  }
+
+  // All communities (explicit request for everything/table)
+  if (/all|every/.test(m) && /communities|clubs?/.test(m)) {
+    return {
+      sql: `SELECT id, name, description, category, member_count FROM communities WHERE deleted_at IS NULL ORDER BY member_count DESC LIMIT 10`,
+      params: [],
+      label: 'communities_all',
+    };
+  }
+
+  // Communities list / recommendations
+  if (/(communities|clubs?|sangha|groups)/.test(m)) {
+    const rank = interestRanking('category', interests, 1);
+    const base = `SELECT id, name, description, category, member_count FROM communities WHERE deleted_at IS NULL`;
+    const sql = rank.orderBy
+      ? `${base} ORDER BY ${rank.orderBy}, member_count DESC LIMIT 3`
+      : `${base} ORDER BY member_count DESC LIMIT 3`;
+    return { sql, params: rank.params, label: 'communities_recommend' };
+  }
+
+  return null;
+}
+
+/** Builds a clean markdown reply deterministically when Gemini is unavailable. */
+function buildFallbackReply(rows: Record<string, any>[], intentLabel: string, userName: string, isFirstMessage: boolean): string {
+  const title = (r: Record<string, any>) => String(r.title ?? r.name ?? '');
+  const detail = (r: Record<string, any>) => {
+    const parts: string[] = [];
+    if (r.event_date) parts.push(String(r.event_date).replace('T', ' ').slice(0, 16));
+    if (r.location) parts.push(`at ${String(r.location)}`);
+    return parts.join(', ');
+  };
+  const desc = (r: Record<string, any>) => {
+    const d = String(r.description ?? r.name ?? '');
+    return d.length > 140 ? d.slice(0, 137) + '...' : d;
+  };
+
+  const lines: string[] = [];
+  if (isFirstMessage && userName) lines.push(`Hello ${userName}! 👋`, '');
+  if (rows.length === 0) {
+    lines.push('I could not find any matching results right now. Please try again in a moment.');
+    return lines.join('\n');
+  }
+
+  const headline = intentLabel.includes('month')
+    ? 'Here are the events happening this month:'
+    : intentLabel.includes('week')
+      ? 'Here are the events happening this week:'
+      : intentLabel.includes('upcoming')
+        ? 'Here are the upcoming events:'
+        : intentLabel.includes('communities')
+          ? 'Here are the communities:'
+          : intentLabel.includes('recommend')
+            ? 'Here are the recommendations for you:'
+            : 'Here are the results:';
+  lines.push(headline, '');
+
+  // Full-list requests → pipe table with all rows
+  if (intentLabel.includes('_all') && rows.length > 3) {
+    const keys = Object.keys(rows[0]);
+    const header = '| ' + keys.join(' | ') + ' |';
+    const sep = '| ' + keys.map(() => '---').join(' | ') + ' |';
+    lines.push(header, sep);
+    rows.forEach(r => {
+      lines.push('| ' + keys.map(k => String(r[k] ?? 'N/A')).join(' | ') + ' |');
+    });
+    return lines.join('\n');
+  }
+
+  rows.slice(0, 3).forEach(r => {
+    lines.push(`**${title(r)}**`);
+    if (detail(r)) lines.push(detail(r));
+    if (desc(r)) lines.push(desc(r));
+    lines.push('');
+  });
+  return lines.join('\n');
+}
+
+// ─── Chat Endpoint (two-pass: SQL generation → final answer with real data) ─
 router.post('/', authMiddleware, async (req: AuthRequest, res, next) => {
-  const { message } = req.body as { message: string };
+  const { message, firstMessage } = req.body as { message: string; firstMessage?: boolean };
 
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'Message is required' });
   }
+
+  const isFirstMessage = !!firstMessage;
 
   if (!process.env.GEMINI_API_KEY) {
     return res.status(503).json({ reply: '⚠️ AI assistant is not configured. Please ask an admin to set up the GEMINI_API_KEY environment variable.' });
@@ -27,89 +220,181 @@ router.post('/', authMiddleware, async (req: AuthRequest, res, next) => {
       systemInstruction: SYSTEM_PROMPT,
     });
 
-    // Build the user message with schema + question
-    const userMessage = [
-      `## Current User\nID: ${req.userId}\n`,
+    // Greet the user by name — fetch their profile from the database.
+    let userName = '';
+    let userInterests = '';
+    try {
+      const userRes = await query('SELECT name, interests FROM users WHERE id = $1', [req.userId]);
+      userName = userRes.rows[0]?.name || '';
+      userInterests = userRes.rows[0]?.interests || '';
+    } catch (userErr) {
+      console.error('Failed to load user profile for chat:', userErr);
+    }
+
+    const contextHeader = [
+      `## Current User\nID: ${req.userId}\nName: ${userName || 'Unknown'}${userInterests ? `\nInterests: ${userInterests}` : ''}\n`,
       `## Database Schema\n${SCHEMA}`,
-      `## User Question\n${message.trim()}`,
     ].join('\n\n');
 
-    // ─── Single Gemini call with one quick retry ───
-    let result;
-    try {
-      result = await model.generateContent(userMessage);
-    } catch (firstError: any) {
-      // On rate limit, do ONE quick retry after 2 seconds, then bail
-      const isRateLimit = firstError.message?.includes('429') || firstError.status === 429;
-      if (isRateLimit) {
-        console.log('Gemini rate limited, quick retry in 2s...');
-        await new Promise(r => setTimeout(r, 2000));
-        try {
-          result = await model.generateContent(userMessage);
-        } catch (secondError: any) {
-          throw secondError; // Still rate limited — let outer handler respond
-        }
-      } else {
-        throw firstError; // Not a rate limit — let outer handler respond
+    // ─── Decide SQL: predefined template (1 Gemini call total) or LLM (2 calls) ──
+    let sql: string | null = null;
+    let sqlParams: any[] = [];
+    let intentLabel = '';
+
+    const template = detectTemplate(message, userInterests);
+    if (template) {
+      sql = template.sql;
+      sqlParams = template.params;
+      intentLabel = template.label;
+    } else {
+      // ─── Pass 1: Ask Gemini for a SQL query only ─────────────────────
+      const sqlPrompt = `${contextHeader}
+
+## Task
+Decide whether you need to query the database to answer this question: "${message.trim()}"
+
+If yes, output ONLY the SQL SELECT statement wrapped in <sql> tags. No other text, no explanations.
+If you can answer without a database query, output exactly: NO_QUERY
+
+## Query rules
+- ONLY SELECT queries. Always use LIMIT (max 20).
+- In normal conversation, LIMIT results to 3. Only return ALL matching rows (LIMIT 10) when the user explicitly asks for everything, a full list, or a table.
+- For recommendations, ORDER BY the user's interests first (from ## Current User) and then by popularity (member_count for communities, attendee_count or event_date for events).
+- Always filter soft-deleted rows with deleted_at IS NULL.`;
+
+      const sqlRaw = (await generateWithRetry(model, sqlPrompt)).trim();
+      const sqlMatch = sqlRaw.match(/<sql>([\s\S]*?)<\/sql>/i);
+      if (sqlMatch) {
+        sql = sanitizeSql(sqlMatch[1].trim());
+        intentLabel = /from\s+events\b/i.test(sql) ? 'events' : '';
       }
     }
 
-    let response = result!.response.text();
-
-    // ─── Parse Action Tags (order-independent attribute matching) ───
-    const actions: { type: string; id?: number; name: string; url?: string }[] = [];
-    const actionRegex = /<action\s+((?:\w+="[^"]*"\s*)*)\/>/gi;
-    let actionMatch;
-    while ((actionMatch = actionRegex.exec(response)) !== null) {
-      const attrs = actionMatch[1];
-      const typeMatch = attrs.match(/type="([^"]+)"/i);
-      const idMatch = attrs.match(/id="([^"]+)"/i);
-      const nameMatch = attrs.match(/name="([^"]+)"/i);
-      const urlMatch = attrs.match(/url="([^"]+)"/i);
-      if (!typeMatch) continue;
-      actions.push({
-        type: typeMatch[1] as any,
-        ...(idMatch ? { id: parseInt(idMatch[1]) } : {}),
-        name: nameMatch?.[1] || '',
-        ...(urlMatch ? { url: urlMatch[1] } : {}),
-      });
-    }
-    // Remove action tags from the response text
-    response = response.replace(actionRegex, '').trim();
-
-    // ─── Check for SQL block ───
-    const sqlMatch = response.match(/<sql>([\s\S]*?)<\/sql>/i);
-    if (sqlMatch) {
-      let sql = sqlMatch[1].trim();
-
-      // Sanitize & validate
-      sql = sanitizeSql(sql);
+    // ─── Execute the query (if any) ──────────────────────────────────
+    let resultsText = '';
+    let resultRows: Record<string, any>[] = [];
+    let sqlTouchedEvents = false;
+    let queryFailed = false;
+    if (sql) {
       if (!isReadOnlyQuery(sql)) {
-        // Replace SQL block with safety warning
-        response = response.replace(sqlMatch[0], '⚠️ I can only look up information.');
+        queryFailed = true;
       } else {
+        sqlTouchedEvents = /from\s+events\b/i.test(sql);
         try {
-          const dbResult = await query(sql);
-          // Check if results are single value (e.g., COUNT) or multiple rows
+          const dbResult = await query(sql, sqlParams);
           const rows = dbResult.rows as Record<string, any>[];
-          let formatted: string;
+          resultRows = rows;
           if (rows.length === 1 && Object.keys(rows[0]).length === 1) {
-            formatted = String(Object.values(rows[0])[0]);
+            resultsText = String(Object.values(rows[0])[0]);
           } else {
-            formatted = formatResults(rows);
+            resultsText = formatResults(rows);
           }
-          // Replace {{RESULTS}} placeholder with actual data
-          if (response.includes('{{RESULTS}}')) {
-            response = response.replace(/\{\{RESULTS\}\}/g, formatted);
-          } else {
-            // Gemini forgot the placeholder — append results directly
-            response += `\n\n${formatted}`;
-          }
-          // Remove the SQL tag from the response
-          response = response.replace(sqlMatch[0], '').trim();
         } catch (dbError: any) {
-          // Query failed — replace SQL block with error note
-          response = response.replace(sqlMatch[0], `I tried to look that up but ran into an issue. Please try rephrasing your question.`);
+          console.error('Chat SQL failed:', dbError.message || dbError);
+          queryFailed = true;
+        }
+      }
+    }
+
+    // ─── Pass 2: Ask Gemini for the final user-facing reply ──────────
+    const greetingRule = isFirstMessage
+      ? 'This is the FIRST message in the conversation. Start your reply with "Hello {Name}! 👋" using the name from ## Current User (skip the greeting only if the name is "Unknown").'
+      : 'This is NOT the first message. Do NOT greet again — skip "Hello {Name}" entirely and answer the question directly.';
+
+    const answerPrompt = `${contextHeader}
+
+## Task
+Write the final response to the user for this question: "${message.trim()}"
+
+${greetingRule}
+${intentLabel ? `\n## Intent hint\nThe query is for the "${intentLabel}" intent — write the reply to match the user's question (e.g. introduce events with a line like "Here are the events happening this month:").` : ''}
+
+${sql && !queryFailed
+  ? `## Actual query results (REAL data from the database)
+${resultsText}
+
+Use the results above. If they include events, add ONE <action type="rsvp" id="{ID}" name="View {Title}" /> button for EACH event using the exact real ID and Title from the results, so the user can click to open the event page.`
+  : queryFailed
+    ? 'The database lookup failed. Tell the user you could not find that information and ask them to rephrase.'
+    : 'No database query was needed. Answer from your knowledge of the platform.'}
+
+## Formatting rules
+- Use markdown: **bold** for titles, plain text for details, bullet lists for non-tabular data.
+- **Events & communities — normal conversation**: show ONLY 2-3 items (never more), so the reply stays clean. For each item use this layout:
+  - **{Title}** (bold)
+  - a small detail line: date and location (e.g. "Sat Aug 15 2026, at LBEF College.")
+  - a short 1-2 line description
+  Then add ONE <action type="rsvp" id="{ID}" name="View {Title}" /> per item, and end with a <action type="view" url="/events" name="View More Events" /> button.
+- **Full list**: ONLY when the user explicitly asks for ALL events/communities or asks for a table, show the full details (up to 10) as a pipe table.
+- **Recommendations**: when the user asks for recommendations/suggestions, prioritize items matching the user's Interests (from ## Current User) FIRST, then popular ones.
+- Use <action type="join|rsvp|view|link" ... /> tags for any buttons you want to show.
+- Be friendly and conversational, use emojis sparingly.
+- Reply ONLY with the final message.`;
+
+    let response: string;
+    try {
+      response = (await generateWithRetry(model, answerPrompt)).trim();
+    } catch (formatError: any) {
+      console.error('Chat formatting failed, using fallback reply:', formatError.message || formatError);
+      response = buildFallbackReply(resultRows, intentLabel, userName, isFirstMessage);
+    }
+
+    // ─── Parse action tags out of the final reply ────────────────────
+    let actions = parseActions(response);
+    response = response.replace(/<action\s+((?:\w+="[^"]*"\s*)*)\/>/gi, '').trim();
+
+    // ─── Deterministic fallback 1: greet by name (FIRST message only) ─
+    if (isFirstMessage && userName && !/^hello/i.test(response)) {
+      response = `Hello ${userName}! 👋\n\n${response}`;
+    }
+
+    // ─── Deterministic fallback 2: per-event/community link buttons ──
+    // Auto-generate buttons from real result rows (capped at 3) + a "view more" button.
+    if (sql && !queryFailed && resultRows.length > 0) {
+      sqlTouchedEvents = sqlTouchedEvents || /from\s+events\b/i.test(sql);
+      const sqlTouchedCommunities = /from\s+communities\b/i.test(sql);
+
+      if (sqlTouchedEvents) {
+        const autoButtons = resultRows
+          .filter(r => r.id !== undefined && r.title !== undefined)
+          .map(r => ({
+            type: 'rsvp' as const,
+            id: Number(r.id),
+            name: `View ${String(r.title)}`,
+          }))
+          .slice(0, 3);
+
+        if (autoButtons.length > 0) {
+          const existing = new Set(actions.map(a => `${a.type}:${a.id ?? a.name}`));
+          for (const btn of autoButtons) {
+            const key = `${btn.type}:${btn.id}`;
+            if (!existing.has(key)) actions.push(btn);
+          }
+          if (!actions.some(a => a.type === 'view' && a.url === '/events')) {
+            actions.push({ type: 'view', name: 'View More Events', url: '/events' } as any);
+          }
+        }
+      }
+
+      if (sqlTouchedCommunities) {
+        const autoButtons = resultRows
+          .filter(r => r.id !== undefined && r.name !== undefined)
+          .map(r => ({
+            type: 'join' as const,
+            id: Number(r.id),
+            name: `View ${String(r.name)}`,
+          }))
+          .slice(0, 3);
+
+        if (autoButtons.length > 0) {
+          const existing = new Set(actions.map(a => `${a.type}:${a.id ?? a.name}`));
+          for (const btn of autoButtons) {
+            const key = `${btn.type}:${btn.id}`;
+            if (!existing.has(key)) actions.push(btn);
+          }
+          if (!actions.some(a => a.type === 'view' && a.url === '/communities')) {
+            actions.push({ type: 'view', name: 'View More Communities', url: '/communities' } as any);
+          }
         }
       }
     }

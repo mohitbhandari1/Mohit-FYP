@@ -42,6 +42,31 @@ export default function OrganizerDashboard() {
   const [removeTarget, setRemoveTarget] = useState<any>(null);
   const [removingMember, setRemovingMember] = useState(false);
 
+  // Export members (XLSX)
+  const [downloading, setDownloading] = useState(false);
+  const handleDownloadMembers = async () => {
+    if (!selectedCommunity) return;
+    setDownloading(true);
+    try {
+      const res = await apiFetch(`/api/communities/${selectedCommunity.id}/export`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        addToast('error', err?.error || 'Failed to download');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(selectedCommunity.name || 'community').replace(/[^\w\s-]/g, '')}_members.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch { addToast('error', 'Failed to download'); }
+    finally { setDownloading(false); }
+  };
+
   // Create community
   const [showNewCommunity, setShowNewCommunity] = useState(false);
   const [newCommunityForm, setNewCommunityForm] = useState({ name: '', description: '', category: '', website: '', location: '' });
@@ -513,9 +538,18 @@ export default function OrganizerDashboard() {
                   {/* ─── Members Tab ─── */}
                   {activeTab === 'members' && (
                     <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl overflow-hidden">
-                      <div className="p-6 border-b border-white/5">
-                        <h2 className="text-lg font-semibold text-slate-100">Members ({members.length})</h2>
-                        <p className="text-sm text-slate-400 mt-1">Manage who is part of your community</p>
+                      <div className="p-6 border-b border-white/5 flex items-center justify-between gap-3">
+                        <div>
+                          <h2 className="text-lg font-semibold text-slate-100">Members ({members.length})</h2>
+                          <p className="text-sm text-slate-400 mt-1">Manage who is part of your community</p>
+                        </div>
+                        <button onClick={handleDownloadMembers} disabled={downloading}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-sm font-medium hover:bg-emerald-500/25 transition-all disabled:opacity-50 flex-shrink-0">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                          {downloading ? 'Downloading...' : 'Download XLSX'}
+                        </button>
                       </div>
                       {members.length > 0 ? (
                         <div className="divide-y divide-white/5">

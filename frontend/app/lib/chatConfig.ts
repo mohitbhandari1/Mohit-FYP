@@ -10,6 +10,7 @@ export const quickPrompts: string[] = [
   'Recommend communities',
   'Upcoming events',
   'Events this week',
+  'Events this month',
   'Find communities by category',
   'Most popular communities',
   'Most popular events',

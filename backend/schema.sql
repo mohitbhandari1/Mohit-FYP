@@ -82,8 +82,21 @@ CREATE TABLE IF NOT EXISTS rsvps (
   full_name VARCHAR(255),
   phone VARCHAR(100),
   email VARCHAR(255),
+  answers JSONB,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(user_id, event_id)
+);
+
+-- ─── Event Registration Questions (custom questions set by organizer) ───
+CREATE TABLE IF NOT EXISTS event_questions (
+  id SERIAL PRIMARY KEY,
+  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  question TEXT NOT NULL,
+  type VARCHAR(20) NOT NULL DEFAULT 'text',
+  required BOOLEAN NOT NULL DEFAULT FALSE,
+  options JSONB,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- ─── Reviews ───

@@ -378,10 +378,23 @@ export default function HomePage() {
                         </div>
                       )}
 
-                      {/* Attendees */}
-                      {(event.attendee_count ?? 0) > 0 && (
-                        <div className="text-sm text-slate-400">{event.attendee_count} attendees</div>
-                      )}
+                      {/* Attendees & seats remaining */}
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
+                        {(event.attendee_count ?? 0) > 0 && (
+                          <div className="text-sm text-slate-400">{event.attendee_count} attendees</div>
+                        )}
+                        {(event as any).seats_remaining != null && (
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+                            (event as any).seats_remaining <= 0
+                              ? 'bg-red-500/15 text-red-400 border-red-500/20'
+                              : (event as any).seats_remaining <= 10
+                                ? 'bg-amber-500/15 text-amber-400 border-amber-500/20'
+                                : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20'
+                          }`}>
+                            {(event as any).seats_remaining <= 0 ? 'Event Full' : `${(event as any).seats_remaining} seat${(event as any).seats_remaining === 1 ? '' : 's'} left`}
+                          </span>
+                        )}
+                      </div>
 
                       {/* RSVP badge */}
                       {rsvpStatus[event.id] === 'attending' && (

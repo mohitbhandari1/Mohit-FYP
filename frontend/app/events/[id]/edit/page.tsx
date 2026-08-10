@@ -29,6 +29,7 @@ export default function EditEventPage() {
     topics: [] as string[], topicInput: '',
     hosts: [{ name: '', role: '' }],
     speakers: '', agenda: '', requirements: '', instructions: '',
+    questions: [{ question: '', type: 'text', required: false, options: '' }],
   });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -76,6 +77,14 @@ export default function EditEventPage() {
           agenda: data.agenda || '',
           requirements: data.requirements || '',
           instructions: data.instructions || '',
+          questions: Array.isArray(data.questions) && data.questions.length > 0
+            ? data.questions.map((q: any) => ({
+                question: q.question || '',
+                type: q.type || 'text',
+                required: !!q.required,
+                options: Array.isArray(q.options) ? q.options.join(', ') : '',
+              }))
+            : [{ question: '', type: 'text', required: false, options: '' }],
         });
       } catch (err) { setError('Failed to load event'); }
       finally { setLoading(false); }
@@ -99,6 +108,28 @@ export default function EditEventPage() {
 
   const removeTopic = (topic: string) => {
     setFormData((prev) => ({ ...prev, topics: prev.topics.filter((t) => t !== topic) }));
+  };
+
+  // ─── Custom registration questions ───
+  const updateQuestion = (index: number, field: string, value: any) => {
+    setFormData((prev) => {
+      const questions = prev.questions.map((q, i) => (i === index ? { ...q, [field]: value } : q));
+      return { ...prev, questions };
+    });
+  };
+
+  const addQuestion = () => {
+    setFormData((prev) => ({
+      ...prev,
+      questions: [...prev.questions, { question: '', type: 'text', required: false, options: '' }],
+    }));
+  };
+
+  const removeQuestion = (index: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      questions: prev.questions.filter((_, i) => i !== index),
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -128,6 +159,20 @@ export default function EditEventPage() {
       if (formData.instructions) payload.append('instructions', formData.instructions);
       if (formData.hosts.length > 0 && formData.hosts[0].name) payload.append('hosts', JSON.stringify(formData.hosts));
       if (bannerFile) payload.append('banner_image', bannerFile);
+
+      // Custom registration questions (seat limit is sent as max_attendees above)
+      const validQuestions = formData.questions
+        .filter((q) => q.question.trim())
+        .map((q) => ({
+          question: q.question.trim(),
+          type: q.type,
+          required: q.required,
+          options: q.type === 'select'
+            ? q.options.split(',').map((s) => s.trim()).filter(Boolean)
+            : [],
+        }));
+      // Always send (even empty) so the organizer can also clear all questions
+      payload.append('questions', JSON.stringify(validQuestions));
 
       const res = await apiFetch(`/api/events/${eventId}`, {
         method: 'PUT',
@@ -258,17 +303,83 @@ export default function EditEventPage() {
                 </div>
               </div>
 
-              {/* Max Attendees & RSVP Deadline */}
+              {/* Seat Limit & RSVP Deadline */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className={labelClass}>Max Attendees</label>
+                  <label className={labelClass}>Seat Limit (Max Attendees)</label>
                   <input type="number" name="max_attendees" value={formData.max_attendees} onChange={handleChange}
-                    placeholder="Unlimited" className={inputClass} />
+                    min={1} placeholder="Unlimited" className={inputClass} />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Leave empty for unlimited seats. Editable anytime — even after people have joined.
+                  </p>
                 </div>
                 <div>
                   <label className={labelClass}>RSVP Deadline</label>
                   <input type="date" name="rsvp_deadline" value={formData.rsvp_deadline} onChange={handleChange} className={inputClass} />
                 </div>
+              </div>
+
+              {/* Custom Registration Questions */}
+              <div>
+                <label className={labelClass}>Registration Questions</label>
+                <p className="text-xs text-slate-500 mb-3">
+                  Ask attendees to answer these before joining. Leave blank if not needed.
+                </p>
+                <div className="space-y-3">
+                  {formData.questions.map((q, index) => (
+                    <div key={index} className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-slate-400 mb-1">Question {index + 1} *</label>
+                          <input type="text" value={q.question}
+                            onChange={(e) => updateQuestion(index, 'question', e.target.value)}
+                            placeholder="e.g., How did you hear about this event?"
+                            className={inputClass} />
+                        </div>
+                        <button type="button" onClick={() => removeQuestion(index)}
+                          className="mt-5 p-2 rounded-lg text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                          title="Remove question">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-400 mb-1">Answer Type</label>
+                          <select value={q.type} onChange={(e) => updateQuestion(index, 'type', e.target.value)}
+                            className={inputClass}>
+                            <option value="text" className="bg-slate-900">Short text</option>
+                            <option value="textarea" className="bg-slate-900">Long text</option>
+                            <option value="select" className="bg-slate-900">Multiple choice</option>
+                          </select>
+                        </div>
+                        <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer pt-5">
+                          <input type="checkbox" checked={q.required}
+                            onChange={(e) => updateQuestion(index, 'required', e.target.checked)}
+                            className="w-4 h-4 rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/20" />
+                          Required to answer
+                        </label>
+                      </div>
+                      {q.type === 'select' && (
+                        <div>
+                          <label className="block text-xs font-medium text-slate-400 mb-1">Options (comma separated)</label>
+                          <input type="text" value={q.options}
+                            onChange={(e) => updateQuestion(index, 'options', e.target.value)}
+                            placeholder="Option A, Option B, Option C"
+                            className={inputClass} />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={addQuestion}
+                  className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-amber-500/20 bg-amber-500/10 text-amber-400 text-sm font-medium hover:bg-amber-500/20 transition-all">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  Add Question
+                </button>
               </div>
 
               {/* Topics */}

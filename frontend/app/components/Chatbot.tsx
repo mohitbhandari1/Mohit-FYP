@@ -65,6 +65,8 @@ export default function Chatbot() {
   const sendMessage = async (text: string) => {
     if (!text.trim()) return;
 
+    const isFirstMessage = !messages.some((m) => m.role === 'user');
+
     const userMsg: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -80,7 +82,7 @@ export default function Chatbot() {
     try {
       const res = await apiFetch('/api/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: text.trim() }),
+        body: JSON.stringify({ message: text.trim(), firstMessage: isFirstMessage }),
       });
 
       let replyText = '';
