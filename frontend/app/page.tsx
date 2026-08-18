@@ -7,6 +7,7 @@ import Chatbot from './components/Chatbot';
 import { apiFetch, BACKEND_URL } from './lib/auth';
 import { useAuth } from './lib/AuthContext';
 import { SkeletonCard } from './components/Skeleton';
+import CommunityJourney from './components/CommunityJourney';
 
 interface Event {
   id: number;
@@ -42,38 +43,53 @@ interface Recommendation {
   score?: number;
 }
 
-// Animated counter hook
-function useCounter(target: number, duration: number = 2000, startOnView: boolean = true) {
+// Count from zero when the stat card enters the viewport.
+function useCounter(target: number, duration: number = 1800) {
   const [count, setCount] = useState(0);
   const [started, setStarted] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!startOnView) {
+    const node = ref.current;
+    if (!node) return;
+
+    // Show the final value immediately for people who reduce motion.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setCount(target);
       setStarted(true);
       return;
     }
+
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) setStarted(true);
+        if (entry.isIntersecting) {
+          setStarted(true);
+          observer.unobserve(entry.target);
+        }
       },
-      { threshold: 0.3 }
+      { threshold: 0.25 }
     );
-    if (ref.current) observer.observe(ref.current);
+    observer.observe(node);
     return () => observer.disconnect();
-  }, [startOnView]);
+  }, [target]);
 
   useEffect(() => {
     if (!started) return;
-    let startTime: number;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    setCount(0);
+    let animationFrame: number;
+    let startTime: number | undefined;
     const step = (timestamp: number) => {
-      if (!startTime) startTime = timestamp;
+      if (startTime === undefined) startTime = timestamp;
       const progress = Math.min((timestamp - startTime) / duration, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
       setCount(Math.floor(eased * target));
-      if (progress < 1) requestAnimationFrame(step);
+      if (progress < 1) animationFrame = requestAnimationFrame(step);
     };
-    requestAnimationFrame(step);
+    animationFrame = requestAnimationFrame(step);
+
+    return () => cancelAnimationFrame(animationFrame);
   }, [started, target, duration]);
 
   return { count, ref };
@@ -214,12 +230,6 @@ export default function HomePage() {
 
           {/* Hero content */}
           <div className="relative z-10 max-w-5xl mx-auto px-6 text-center">
-            {/* Badge pill */}
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 border border-amber-500/20 mb-8 opacity-0 animate-fade-in-up animate-fill-both">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              <span className="text-sm font-medium text-amber-300">Smart Community Platform</span>
-            </div>
-
             {/* Main heading */}
             <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold leading-tight mb-6 opacity-0 animate-fade-in-up animate-fill-both animate-delay-100">
               <span className="text-slate-100">Connect. Discover.</span>
@@ -255,32 +265,6 @@ export default function HomePage() {
 
           {/* Bottom gradient fade */}
           <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-slate-950 to-transparent" />
-        </section>
-
-        {/* ═══════════════════ STATS SECTION ═══════════════════ */}
-        <section className="relative py-20 border-y border-white/5">
-          <div className="max-w-6xl mx-auto px-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-              {[
-                { label: 'Active Users', counter: statUsers, suffix: '+' },
-                { label: 'Events Hosted', counter: statEvents, suffix: '+' },
-                { label: 'Communities', counter: statCommunities, suffix: '+' },
-                { label: 'Connections Made', counter: statConnections, suffix: '+' },
-              ].map((stat, i) => (
-                <div
-                  key={stat.label}
-                  ref={stat.counter.ref}
-                  className="text-center p-6 rounded-2xl glass opacity-0 animate-fade-in-up animate-fill-both"
-                  style={{ animationDelay: `${400 + i * 100}ms` }}
-                >
-                  <div className="text-3xl sm:text-4xl font-bold text-gradient mb-2">
-                    {stat.counter.count.toLocaleString()}{stat.suffix}
-                  </div>
-                  <div className="text-sm text-slate-400">{stat.label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
         </section>
 
         {/* ═══════════════════ UPCOMING EVENTS ═══════════════════ */}
@@ -383,15 +367,13 @@ export default function HomePage() {
                         {(event.attendee_count ?? 0) > 0 && (
                           <div className="text-sm text-slate-400">{event.attendee_count} attendees</div>
                         )}
-                        {(event as any).seats_remaining != null && (
+                        {(event as any).seats_remaining != null && (event as any).seats_remaining <= 10 && (
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
                             (event as any).seats_remaining <= 0
                               ? 'bg-red-500/15 text-red-400 border-red-500/20'
-                              : (event as any).seats_remaining <= 10
-                                ? 'bg-amber-500/15 text-amber-400 border-amber-500/20'
-                                : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20'
+                              : 'bg-amber-500/15 text-amber-400 border-amber-500/20'
                           }`}>
-                            {(event as any).seats_remaining <= 0 ? 'Event Full' : `${(event as any).seats_remaining} seat${(event as any).seats_remaining === 1 ? '' : 's'} left`}
+                            {(event as any).seats_remaining <= 0 ? 'Event Full' : `Only ${(event as any).seats_remaining} seat${(event as any).seats_remaining === 1 ? '' : 's'} left`}
                           </span>
                         )}
                       </div>
@@ -589,6 +571,85 @@ export default function HomePage() {
             </div>
           </section>
         )}
+
+        {/* ═══════════════════ STATS SECTION ═══════════════════ */}
+        <section className="relative py-20 border-t border-white/5">
+          <div className="max-w-6xl mx-auto px-6">
+            <div className="mb-10">
+              <h2 className="text-3xl sm:text-4xl font-bold text-slate-100 opacity-0 animate-fade-in-up animate-fill-both animate-delay-100">
+                Smart Connects at a Glance
+              </h2>
+              <p className="text-slate-400 mt-2 opacity-0 animate-fade-in-up animate-fill-both animate-delay-200">
+                Connecting people, communities, and opportunities in one platform.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              {[
+                {
+                  label: 'Active Users',
+                  counter: statUsers,
+                  suffix: '+',
+                  icon: (
+                    <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                  ),
+                },
+                {
+                  label: 'Events Hosted',
+                  counter: statEvents,
+                  suffix: '+',
+                  icon: (
+                    <svg className="w-6 h-6 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  ),
+                },
+                {
+                  label: 'Communities',
+                  counter: statCommunities,
+                  suffix: '+',
+                  icon: (
+                    <svg className="w-6 h-6 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 21h18M5 21V7a2 2 0 012-2h10a2 2 0 012 2v14M9 9h6m-6 4h6m-6 4h6" />
+                    </svg>
+                  ),
+                },
+                {
+                  label: 'Connections Made',
+                  counter: statConnections,
+                  suffix: '+',
+                  icon: (
+                    <svg className="w-6 h-6 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+                    </svg>
+                  ),
+                },
+              ].map((stat, i) => (
+                <div
+                  key={stat.label}
+                  ref={stat.counter.ref}
+                  className="text-center p-6 rounded-2xl glass opacity-0 animate-fade-in-up animate-fill-both transition-transform duration-300 hover:-translate-y-1"
+                  style={{ animationDelay: `${400 + i * 100}ms` }}
+                >
+                  <div
+                    className="w-12 h-12 mx-auto mb-3 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center border border-white/5 stat-icon-pulse"
+                    style={{ animationDelay: `${1000 + i * 150}ms` }}
+                  >
+                    {stat.icon}
+                  </div>
+                  <div className="text-3xl sm:text-4xl font-bold text-gradient mb-2">
+                    {stat.counter.count.toLocaleString()}{stat.suffix}
+                  </div>
+                  <div className="text-sm text-slate-400">{stat.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ═══════════════════ ORGANIZER / COMMUNITY JOURNEY SECTION ═══════════════════ */}
+        <CommunityJourney />
 
         {/* ═══════════════════ CTA SECTION ═══════════════════ */}
         {!isAuthenticated && (

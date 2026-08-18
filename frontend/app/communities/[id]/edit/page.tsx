@@ -6,6 +6,7 @@ import Link from 'next/link';
 import Navbar from '../../../components/Navbar';
 import Chatbot from '../../../components/Chatbot';
 import ConfirmModal from '../../../components/ConfirmModal';
+import ImageCropper from '../../../components/ImageCropper';
 import { apiFetch, BACKEND_URL } from '../../../lib/auth';
 
 const CATEGORIES = [
@@ -246,29 +247,22 @@ export default function EditCommunityPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className={labelClass}>Banner Image</label>
-                    {formData.banner_image && !bannerFile && (
-                      <div className="mb-3 rounded-xl overflow-hidden border border-white/10">
-                        <img src={`${BACKEND_URL}${formData.banner_image}`} alt="Current banner"
-                          className="w-full h-32 object-cover" />
-                        <p className="px-3 py-1.5 text-xs text-slate-500 bg-white/[0.03]">Current banner</p>
-                      </div>
-                    )}
-                    <input type="file" accept="image/*" onChange={(e) => setBannerFile(e.target.files?.[0] || null)}
-                      className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer" />
-                    <p className="mt-1 text-xs text-slate-500">1920 × 1080 px recommended. {formData.banner_image ? (bannerFile ? 'New banner selected. Save to replace.' : 'Upload a new one to replace the current banner.') : ''}</p>
+                    <ImageCropper
+                      aspect={16 / 9}
+                      currentUrl={formData.banner_image ? `${BACKEND_URL}${formData.banner_image}` : undefined}
+                      onChange={setBannerFile}
+                    />
+                    <p className="mt-1 text-xs text-slate-500">Drag &amp; drop an image, then drag or zoom to frame it in the 16:9 banner shape.</p>
                   </div>
                   <div>
                     <label className={labelClass}>Logo</label>
-                    {formData.logo && !logoFile && (
-                      <div className="mb-3 rounded-xl overflow-hidden border border-white/10">
-                        <img src={`${BACKEND_URL}${formData.logo}`} alt="Current logo"
-                          className="w-full h-32 object-contain bg-white/[0.02]" />
-                        <p className="px-3 py-1.5 text-xs text-slate-500 bg-white/[0.03]">Current logo</p>
-                      </div>
-                    )}
-                    <input type="file" accept="image/*" onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
-                      className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer" />
-                    <p className="mt-1 text-xs text-slate-500">1920 × 1080 px recommended. {formData.logo ? (logoFile ? 'New logo selected. Save to replace.' : 'Upload a new one to replace the current logo.') : ''}</p>
+                    <ImageCropper
+                      aspect={1}
+                      currentUrl={formData.logo ? `${BACKEND_URL}${formData.logo}` : undefined}
+                      onChange={setLogoFile}
+                      outputMaxWidth={1024}
+                    />
+                    <p className="mt-1 text-xs text-slate-500">Drag &amp; drop an image, then drag or zoom to frame it in the square logo shape.</p>
                   </div>
                 </div>
               </div>

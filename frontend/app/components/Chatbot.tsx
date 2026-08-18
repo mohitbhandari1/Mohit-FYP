@@ -27,6 +27,7 @@ interface ChatResponse {
   actions?: ActionButton[];
   timestamp?: string;
   message?: string;
+  error?: string;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -90,7 +91,7 @@ export default function Chatbot() {
 
       try {
         const data: ChatResponse = await res.json();
-        replyText = data.reply || data.message || '';
+        replyText = data.reply || data.message || data.error || '';
         actions = data.actions;
       } catch {
         replyText = '';
@@ -98,7 +99,9 @@ export default function Chatbot() {
 
       if (!replyText) {
         replyText =
-          'Sorry, I encountered an error. Please try again in a moment.';
+          res.status === 401
+            ? 'Please log in to use the chat assistant.'
+            : 'Sorry, I encountered an error. Please try again in a moment.';
       }
 
       const botMsg: Message = {

@@ -156,7 +156,7 @@ export default function MyEventsPage() {
                       )}
                       {activeTab === 'not-attending' && (
                         <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30 backdrop-blur-sm">
-                          ✗ Not Going
+                          ✗ Not Attending
                         </span>
                       )}
                       {activeTab === 'saved' && (

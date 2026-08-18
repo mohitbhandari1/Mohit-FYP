@@ -1,7 +1,7 @@
 import express from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { query } from '../db';
-import { authMiddleware, AuthRequest } from '../middleware/auth';
+import { optionalAuth, AuthRequest } from '../middleware/auth';
 import { SCHEMA, SYSTEM_PROMPT, isReadOnlyQuery, sanitizeSql, formatResults } from '../config/chat';
 
 const router = express.Router();
@@ -201,7 +201,8 @@ function buildFallbackReply(rows: Record<string, any>[], intentLabel: string, us
 }
 
 // ─── Chat Endpoint (two-pass: SQL generation → final answer with real data) ─
-router.post('/', authMiddleware, async (req: AuthRequest, res, next) => {
+// Uses optionalAuth so guests can chat too — logged-in users get name greeting.
+router.post('/', optionalAuth, async (req: AuthRequest, res, next) => {
   const { message, firstMessage } = req.body as { message: string; firstMessage?: boolean };
 
   if (!message || typeof message !== 'string') {
@@ -220,15 +221,17 @@ router.post('/', authMiddleware, async (req: AuthRequest, res, next) => {
       systemInstruction: SYSTEM_PROMPT,
     });
 
-    // Greet the user by name — fetch their profile from the database.
+    // Greet the user by name — fetch their profile from the database (if logged in).
     let userName = '';
     let userInterests = '';
-    try {
-      const userRes = await query('SELECT name, interests FROM users WHERE id = $1', [req.userId]);
-      userName = userRes.rows[0]?.name || '';
-      userInterests = userRes.rows[0]?.interests || '';
-    } catch (userErr) {
-      console.error('Failed to load user profile for chat:', userErr);
+    if (req.userId) {
+      try {
+        const userRes = await query('SELECT name, interests FROM users WHERE id = $1', [req.userId]);
+        userName = userRes.rows[0]?.name || '';
+        userInterests = userRes.rows[0]?.interests || '';
+      } catch (userErr) {
+        console.error('Failed to load user profile for chat:', userErr);
+      }
     }
 
     const contextHeader = [

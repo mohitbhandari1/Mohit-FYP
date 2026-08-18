@@ -54,6 +54,7 @@ function getCommunityFileUrls(files: { [fieldname: string]: Express.Multer.File[
 router.get('/', async (req, res, next) => {
   const searchTerm = req.query.search ? `%${req.query.search}%` : null;
   const category = req.query.category as string;
+  const sort = req.query.sort as string; // newest | oldest | popular | name
   const page = Number(req.query.page) || 1;
   const limit = Number(req.query.limit) || 20;
   const offset = (page - 1) * limit;
@@ -76,12 +77,23 @@ router.get('/', async (req, res, next) => {
     }
 
     if (category) {
-      sql += ` AND c.category = $${paramIdx}`;
-      params.push(category);
+      // Case-insensitive, tolerant match: "health" finds "Health & Wellness",
+      // "social" finds "Social Service", etc.
+      sql += ` AND c.category ILIKE $${paramIdx}`;
+      params.push(`%${category}%`);
       paramIdx++;
     }
 
-    sql += ' ORDER BY c.member_count DESC, c.id DESC';
+    // Sort by established date (created_at) or popularity or name.
+    if (sort === 'newest') {
+      sql += ' ORDER BY c.created_at DESC, c.id DESC';
+    } else if (sort === 'oldest') {
+      sql += ' ORDER BY c.created_at ASC, c.id ASC';
+    } else if (sort === 'name') {
+      sql += ' ORDER BY LOWER(c.name) ASC, c.id ASC';
+    } else {
+      sql += ' ORDER BY c.member_count DESC, c.id DESC';
+    }
     sql += ` LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
     params.push(limit, offset);
 
@@ -98,15 +110,40 @@ router.get('/', async (req, res, next) => {
       countIdx++;
     }
     if (category) {
-      countSql += ` AND category = $${countIdx}`;
-      countParams.push(category);
+      countSql += ` AND category ILIKE $${countIdx}`;
+      countParams.push(`%${category}%`);
       countIdx++;
     }
 
     const countResult = await query(countSql, countParams);
 
+    // Related communities from OTHER categories (popular first). Returned when a
+    // category filter is active so the page never looks empty and users discover
+    // communities in similar categories (e.g. Health → Technology, Sports).
+    let related: any[] = [];
+    if (category && result.rows.length < 4) {
+      const excludeIds = result.rows.map((r: any) => r.id);
+      const relatedRes = await query(
+        `SELECT c.id, c.name, c.description, c.category, c.website, c.owner_id,
+                c.member_count, c.banner_image, c.logo, c.location, c.is_verified,
+                c.facebook, c.instagram, c.linkedin, c.tiktok,
+                c.is_private, c.member_approval,
+                c.created_at,
+                u.name as owner_name
+         FROM communities c LEFT JOIN users u ON c.owner_id = u.id
+         WHERE c.deleted_at IS NULL
+           AND (c.category IS NULL OR c.category NOT ILIKE $1)
+           AND NOT (c.id = ANY($2::int[]))
+         ORDER BY c.member_count DESC, c.id DESC
+         LIMIT 3`,
+        [`%${category}%`, excludeIds.length ? excludeIds : [0]]
+      );
+      related = relatedRes.rows;
+    }
+
     res.json({
       communities: result.rows,
+      related,
       total: parseInt(countResult.rows[0].total),
       page,
       limit,

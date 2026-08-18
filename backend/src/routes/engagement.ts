@@ -1,13 +1,61 @@
 import express from 'express';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import { query } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 
 const router = express.Router();
 
+// ─── File Upload Setup for RSVP verification documents ───
+const rsvpDocStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    const dir = path.join(__dirname, '../../uploads/rsvp-documents');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, `rsvp-${uniqueSuffix}${ext}`);
+  },
+});
+
+const uploadRsvpDocument = multer({
+  storage: rsvpDocStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+    ];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF, DOC, DOCX, and image files (JPG, PNG, GIF, WEBP) are allowed'));
+    }
+  },
+});
+
 // ─── RSVP Endpoints ───
 
 // POST /api/engagement/rsvp - RSVP to an event (attending/not_attending)
-router.post('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
+// Accepts multipart/form-data so attendees can upload:
+//   - `document`  → event-level verification document (when the organizer requires one)
+//   - `answer_files` + `answer_file_questions` → file answers for "file"-type
+//     registration questions (files and their question ids arrive in the same order)
+// `answers` (text answers) is sent as a JSON string.
+router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
+  { name: 'document', maxCount: 1 },
+  { name: 'answer_files', maxCount: 20 },
+]), async (req: AuthRequest, res, next) => {
   const { event_id, status, full_name, phone, email, answers } = req.body;
   if (!event_id) {
     return res.status(400).json({ error: 'event_id is required' });
@@ -18,10 +66,22 @@ router.post('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
     return res.status(400).json({ error: 'Status must be "attending" or "not_attending"' });
   }
 
+  // `answers` arrives as a JSON string in multipart form data
+  let parsedAnswers: Record<string, any> = {};
+  if (typeof answers === 'string' && answers) {
+    try {
+      parsedAnswers = JSON.parse(answers);
+    } catch {
+      parsedAnswers = {};
+    }
+  } else if (answers && typeof answers === 'object' && !Array.isArray(answers)) {
+    parsedAnswers = answers;
+  }
+
   try {
-    // Check if event exists (include seat capacity)
+    // Check if event exists (include seat capacity + document requirement)
     const eventCheck = await query(
-      'SELECT id, community_id, title, max_attendees, attendee_count FROM events WHERE id = $1 AND deleted_at IS NULL',
+      'SELECT id, community_id, title, max_attendees, attendee_count, requires_documents FROM events WHERE id = $1 AND deleted_at IS NULL',
       [event_id]
     );
     if (eventCheck.rows.length === 0) {
@@ -39,11 +99,38 @@ router.post('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
     // ─── Validate answers for required registration questions ───
     // (Must run BEFORE claiming a seat — a rejected RSVP must not take a seat.)
     const questions = await query(
-      'SELECT id, question, required FROM event_questions WHERE event_id = $1 ORDER BY sort_order ASC, id ASC',
+      'SELECT id, question, type, required FROM event_questions WHERE event_id = $1 ORDER BY sort_order ASC, id ASC',
       [event_id]
     );
-    const answerMap: Record<string, any> =
-      answers && typeof answers === 'object' && !Array.isArray(answers) ? answers : {};
+
+    // ─── File answers for "file"-type registration questions ───
+    // Pair each uploaded file with its question id (same order as multipart fields).
+    const files = (req as any).files || {};
+    const answerFiles: Express.Multer.File[] = files['answer_files'] || [];
+    const rawFileQuestionIds = req.body.answer_file_questions;
+    const fileQuestionIds: string[] = Array.isArray(rawFileQuestionIds)
+      ? rawFileQuestionIds.map(String)
+      : typeof rawFileQuestionIds === 'string' && rawFileQuestionIds
+        ? [rawFileQuestionIds]
+        : [];
+
+    const answerMap: Record<string, any> = { ...parsedAnswers };
+    for (let i = 0; i < answerFiles.length; i++) {
+      const file = answerFiles[i];
+      const qid = fileQuestionIds[i];
+      if (!qid) continue;
+      const question = questions.rows.find((row: any) => String(row.id) === String(qid));
+      // "image"-type questions only accept image files
+      if (question && question.type === 'image' && !file.mimetype.startsWith('image/')) {
+        return res.status(400).json({
+          error: `"${question.question}" requires an image file`,
+          message: `Please upload an image (JPG, PNG, GIF, WEBP) for: ${question.question}`,
+        });
+      }
+      answerMap[String(qid)] = '/uploads/rsvp-documents/' + file.filename;
+      answerMap[String(qid) + '_name'] = file.originalname;
+    }
+
     for (const q of questions.rows) {
       if (q.required) {
         const value = answerMap[String(q.id)] ?? '';
@@ -54,6 +141,21 @@ router.post('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
           });
         }
       }
+    }
+
+    // ─── Event-level verification document (required by organizer) ───
+    // Must run BEFORE claiming a seat — a rejected RSVP must not take a seat.
+    let documentUrl: string | null = null;
+    let documentName: string | null = null;
+    if (rsvpStatus === 'attending' && event.requires_documents) {
+      if (!files['document']?.[0]) {
+        return res.status(400).json({
+          error: 'A verification document is required for this event',
+          message: 'Please upload the required verification document to confirm your seat.',
+        });
+      }
+      documentUrl = '/uploads/rsvp-documents/' + files['document'][0].filename;
+      documentName = files['document'][0].originalname;
     }
 
     // ─── Seat limit / capacity check (atomic — prevents oversubscription) ───
@@ -71,21 +173,32 @@ router.post('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
       }
     }
     // Only keep answers for questions that actually exist on this event.
+    // File answers store the uploaded file URL (+ original name for display).
     // Stored only when attending — switching to not_attending never wipes prior answers.
     const answersJson = rsvpStatus === 'attending' && questions.rows.length > 0
       ? JSON.stringify(Object.fromEntries(
-          questions.rows.map((q: any) => [String(q.id), answerMap[String(q.id)] ?? ''])
+          questions.rows.flatMap((q: any) => {
+            if ((q.type === 'file' || q.type === 'image') && answerMap[String(q.id)]) {
+              return [
+                [String(q.id), answerMap[String(q.id)]],
+                [String(q.id) + '_name', answerMap[String(q.id) + '_name'] ?? ''],
+              ];
+            }
+            return [[String(q.id), answerMap[String(q.id)] ?? '']];
+          })
         ))
       : null;
 
     const result = await query(
-      `INSERT INTO rsvps (user_id, event_id, status, full_name, phone, email, answers)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO rsvps (user_id, event_id, status, full_name, phone, email, answers, document_url, document_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (user_id, event_id)
        DO UPDATE SET status = $3, full_name = COALESCE($4, rsvps.full_name), phone = COALESCE($5, rsvps.phone), email = COALESCE($6, rsvps.email),
-         answers = CASE WHEN $7::jsonb IS NULL THEN rsvps.answers ELSE $7::jsonb END
+         answers = CASE WHEN $7::jsonb IS NULL THEN rsvps.answers ELSE $7::jsonb END,
+         document_url = COALESCE($8, rsvps.document_url), document_name = COALESCE($9, rsvps.document_name)
        RETURNING id, user_id, event_id, status`,
-      [req.userId, event_id, rsvpStatus, full_name || null, phone || null, email || null, answersJson]
+      [req.userId, event_id, rsvpStatus, full_name || null, phone || null, email || null, answersJson,
+       documentUrl, documentName]
     );
 
     // Update attendee_count based on status change.
@@ -137,7 +250,7 @@ router.delete('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
 
   try {
     const prevRsvp = await query(
-      'SELECT status FROM rsvps WHERE user_id = $1 AND event_id = $2',
+      'SELECT status, document_url FROM rsvps WHERE user_id = $1 AND event_id = $2',
       [req.userId, event_id]
     );
 
@@ -151,6 +264,15 @@ router.delete('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
     }
 
     await query('DELETE FROM rsvps WHERE user_id = $1 AND event_id = $2', [req.userId, event_id]);
+
+    // Remove the uploaded verification document from disk
+    if (prevRsvp.rows[0].document_url) {
+      const docPath = path.join(__dirname, '../..', prevRsvp.rows[0].document_url);
+      if (fs.existsSync(docPath)) {
+        try { fs.unlinkSync(docPath); } catch { /* best-effort cleanup */ }
+      }
+    }
+
     res.json({ message: 'RSVP cancelled' });
   } catch (error) {
     next(error);
@@ -175,13 +297,111 @@ router.get('/rsvp/event/:eventId', authMiddleware, async (req: AuthRequest, res,
     }
 
     const result = await query(
-      `SELECT r.user_id, r.status, r.full_name, r.phone, r.email, r.answers, r.created_at, u.name, u.avatar_url
+      `SELECT r.user_id, r.status, r.full_name, r.phone, r.email, r.answers, r.created_at,
+              r.document_url, r.document_name, r.document_status, r.document_reviewed_at,
+              u.name, u.avatar_url
        FROM rsvps r JOIN users u ON r.user_id = u.id
        WHERE r.event_id = $1
        ORDER BY r.created_at DESC`,
       [eventId]
     );
     res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PATCH /api/engagement/rsvp/document-status - Mark an attendee's verification
+// document as verified/rejected (or reset to pending). Organizer/admin only.
+router.patch('/rsvp/document-status', authMiddleware, async (req: AuthRequest, res, next) => {
+  const { event_id, user_id, status } = req.body;
+  if (!event_id || !user_id) {
+    return res.status(400).json({ error: 'event_id and user_id are required' });
+  }
+  const docStatus = status || null;
+  if (docStatus !== null && !['verified', 'rejected'].includes(docStatus)) {
+    return res.status(400).json({ error: 'Status must be "verified", "rejected", or empty to reset' });
+  }
+
+  try {
+    // Only the community owner (organizer) or an admin can review documents
+    const eventCheck = await query(
+      `SELECT e.id, c.owner_id FROM events e JOIN communities c ON e.community_id = c.id
+       WHERE e.id = $1 AND e.deleted_at IS NULL AND c.deleted_at IS NULL`,
+      [event_id]
+    );
+    if (eventCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    if (eventCheck.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Not authorized to review documents' });
+    }
+
+    const result = await query(
+      `UPDATE rsvps
+       SET document_status = $1, document_reviewed_at = NOW()
+       WHERE event_id = $2 AND user_id = $3
+       RETURNING user_id, document_status, document_reviewed_at`,
+      [docStatus, event_id, user_id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'RSVP not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PATCH /api/engagement/rsvp/answer-status - Mark a file/image answer to a
+// registration question as verified/rejected (or reset to pending). Organizer/admin only.
+// The status is stored in the rsvp's answers JSONB as `<questionId>_status`.
+router.patch('/rsvp/answer-status', authMiddleware, async (req: AuthRequest, res, next) => {
+  const { event_id, user_id, question_id, status } = req.body;
+  if (!event_id || !user_id || !question_id) {
+    return res.status(400).json({ error: 'event_id, user_id, and question_id are required' });
+  }
+  const answerStatus = status || null;
+  if (answerStatus !== null && !['verified', 'rejected'].includes(answerStatus)) {
+    return res.status(400).json({ error: 'Status must be "verified", "rejected", or empty to reset' });
+  }
+
+  try {
+    // Only the community owner (organizer) or an admin can review answers
+    const eventCheck = await query(
+      `SELECT e.id, c.owner_id FROM events e JOIN communities c ON e.community_id = c.id
+       WHERE e.id = $1 AND e.deleted_at IS NULL AND c.deleted_at IS NULL`,
+      [event_id]
+    );
+    if (eventCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    if (eventCheck.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Not authorized to review answers' });
+    }
+
+    const existing = await query(
+      'SELECT answers FROM rsvps WHERE event_id = $1 AND user_id = $2',
+      [event_id, user_id]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'RSVP not found' });
+    }
+
+    const answers = existing.rows[0].answers || {};
+    const statusKey = `${question_id}_status`;
+    if (answerStatus) {
+      answers[statusKey] = answerStatus;
+    } else {
+      delete answers[statusKey];
+    }
+
+    await query(
+      'UPDATE rsvps SET answers = $1 WHERE event_id = $2 AND user_id = $3',
+      [JSON.stringify(answers), event_id, user_id]
+    );
+
+    res.json({ user_id, question_id, status: answerStatus, answers });
   } catch (error) {
     next(error);
   }

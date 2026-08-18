@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '../../components/Navbar';
 import Chatbot from '../../components/Chatbot';
+import ImageCropper from '../../components/ImageCropper';
 import { apiFetch, BACKEND_URL } from '../../lib/auth';
 
 const TOPIC_OPTIONS = [
@@ -19,6 +20,13 @@ const CATEGORIES = [
   'Sports & Fitness', 'Arts & Culture', 'Environment', 'Other'
 ];
 
+// Scrollable age-limit options for the optional Age Limit question.
+const AGE_LIMIT_OPTIONS = [
+  'All Ages', '12+', '13+', '14+', '15+', '16+', '17+', '18+', '19+', '20+',
+  '21+', '22+', '23+', '24+', '25+', '26+', '27+', '28+', '29+', '30+',
+  '35+', '40+', '45+', '50+', '55+', '60+'
+];
+
 export default function CreateEventPage() {
   const [communities, setCommunities] = useState<any[]>([]);
   const [formData, setFormData] = useState({
@@ -30,6 +38,7 @@ export default function CreateEventPage() {
     topics: [] as string[], topicInput: '',
     hosts: [{ name: '', role: '' }],
     speakers: '', agenda: '', requirements: '', instructions: '',
+    age_limit: '', requires_documents: false, document_instructions: '',
     community_id: '',
     questions: [{ question: '', type: 'text', required: false, options: '' }],
   });
@@ -37,6 +46,7 @@ export default function CreateEventPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [bannerFile, setBannerFile] = useState<File | null>(null);
+  const [showSeatLimit, setShowSeatLimit] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -138,6 +148,9 @@ export default function CreateEventPage() {
       if (formData.instructions) payload.append('instructions', formData.instructions);
       if (formData.hosts.length > 0 && formData.hosts[0].name) payload.append('hosts', JSON.stringify(formData.hosts));
       if (bannerFile) payload.append('banner_image', bannerFile);
+      if (formData.age_limit) payload.append('age_limit', formData.age_limit);
+      payload.append('requires_documents', String(formData.requires_documents));
+      if (formData.document_instructions) payload.append('document_instructions', formData.document_instructions);
 
       // Custom registration questions (seat limit is sent as max_attendees above)
       const validQuestions = formData.questions
@@ -304,10 +317,22 @@ export default function CreateEventPage() {
               {/* Seat Limit & RSVP Deadline */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className={labelClass}>Seat Limit (Max Attendees)</label>
-                  <input type="number" name="max_attendees" value={formData.max_attendees} onChange={handleChange}
-                    min={1} placeholder="Unlimited" className={inputClass} />
-                  <p className="mt-1 text-xs text-slate-500">Leave empty for unlimited seats. You can change this later anytime.</p>
+                  {showSeatLimit || formData.max_attendees ? (
+                    <div>
+                      <label className={labelClass}>Seat Limit (Max Attendees)</label>
+                      <input type="number" name="max_attendees" value={formData.max_attendees} onChange={handleChange}
+                        min={1} placeholder="e.g., 50" className={inputClass} />
+                      <button type="button" onClick={() => { setShowSeatLimit(false); setFormData((prev) => ({ ...prev, max_attendees: '' })); }}
+                        className="mt-1.5 text-xs text-slate-500 hover:text-red-400 transition-colors">
+                        Remove seat limit
+                      </button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setShowSeatLimit(true)}
+                      className="w-full rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-2.5 text-sm text-slate-400 hover:text-amber-400 hover:border-amber-500/30 transition-all">
+                      + Set a seat limit
+                    </button>
+                  )}
                 </div>
                 <div>
                   <label className={labelClass}>RSVP Deadline</label>
@@ -315,6 +340,43 @@ export default function CreateEventPage() {
                     className={inputClass} />
                 </div>
               </div>
+
+              {/* Age Limit & Document Verification */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>
+                    Age Limit <span className="text-xs font-normal text-slate-500">(optional)</span>
+                  </label>
+                  <select name="age_limit" value={formData.age_limit} onChange={handleChange} className={inputClass}>
+                    <option value="" className="bg-slate-900">No age limit</option>
+                    {AGE_LIMIT_OPTIONS.map((age) => (
+                      <option key={age} value={age} className="bg-slate-900">{age}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">Scroll to pick — leave as “No age limit” if the event is open to everyone.</p>
+                </div>
+                <div className="flex items-end pb-1">
+                  <label className="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer">
+                    <input type="checkbox" checked={formData.requires_documents}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, requires_documents: e.target.checked }))}
+                      className="w-4 h-4 rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/20" />
+                    Attendees must upload a document for verification
+                  </label>
+                </div>
+              </div>
+
+              {/* Document Verification Instructions */}
+              {formData.requires_documents && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                  <label className={labelClass}>Instructions for attendees</label>
+                  <textarea name="document_instructions" value={formData.document_instructions} onChange={handleChange}
+                    placeholder="e.g., Upload your government-issued ID or student ID so we can verify your age/eligibility..."
+                    rows={2} className={`${inputClass} resize-none`} />
+                  <p className="mt-1.5 text-xs text-slate-500">
+                    Attendees will upload this file when confirming attendance. Accepted: PDF, DOC, DOCX, JPG, PNG (max 10 MB).
+                  </p>
+                </div>
+              )}
 
               {/* Custom Registration Questions */}
               <div>
@@ -349,6 +411,8 @@ export default function CreateEventPage() {
                             <option value="text" className="bg-slate-900">Short text</option>
                             <option value="textarea" className="bg-slate-900">Long text</option>
                             <option value="select" className="bg-slate-900">Multiple choice</option>
+                            <option value="file" className="bg-slate-900">File upload</option>
+                            <option value="image" className="bg-slate-900">Image upload</option>
                           </select>
                         </div>
                         <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer pt-5">
@@ -366,6 +430,12 @@ export default function CreateEventPage() {
                             placeholder="Option A, Option B, Option C"
                             className={inputClass} />
                         </div>
+                      )}
+                      {q.type === 'file' && (
+                        <p className="text-xs text-slate-500">Attendees will upload a file to answer this question (PDF, DOC, DOCX, JPG, PNG — max 10 MB).</p>
+                      )}
+                      {q.type === 'image' && (
+                        <p className="text-xs text-slate-500">Attendees will upload an image to answer this question (JPG, PNG, GIF, WEBP — max 10 MB).</p>
                       )}
                     </div>
                   ))}
@@ -404,9 +474,8 @@ export default function CreateEventPage() {
               {/* Banner Image */}
               <div>
                 <label className={labelClass}>Banner Image</label>
-                <input type="file" accept="image/*" onChange={(e) => setBannerFile(e.target.files?.[0] || null)}
-                  className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer" />
-                <p className="mt-1 text-xs text-slate-500">1920 × 1080 px recommended for best display.</p>
+                <ImageCropper aspect={16 / 9} onChange={setBannerFile} />
+                <p className="mt-1 text-xs text-slate-500">Drag &amp; drop an image, then drag or zoom to frame it in the 16:9 banner shape.</p>
               </div>
 
               {/* Agenda */}

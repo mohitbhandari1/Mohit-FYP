@@ -1,0 +1,244 @@
+erDiagram
+    users ||--o{ communities : "owns (owner_id)"
+    users ||--o{ community_members : "joins"
+    communities ||--o{ community_members : "has members"
+    users ||--o{ events : "none (via community)"
+    communities ||--o{ events : "hosts"
+    users ||--o{ rsvps : "rsvps to"
+    events ||--o{ rsvps : "receives RSVPs"
+    events ||--o{ event_questions : "asks"
+    users ||--o{ reviews : "writes"
+    communities ||--o{ reviews : "receives"
+    events ||--o{ reviews : "receives"
+    users ||--o{ organizer_applications : "submits"
+    users ||--o{ organizer_applications : "reviews (reviewed_by)"
+    communities ||--o{ announcements : "has"
+    users ||--o{ announcements : "created (created_by)"
+    communities ||--o{ community_discussions : "has"
+    users ||--o{ community_discussions : "posts"
+    community_discussions ||--o{ community_discussions : "replies (parent_id)"
+    users ||--o{ activity_log : "logs (nullable)"
+    users ||--o{ notifications : "receives"
+    users ||--o{ saved_events : "saves"
+    events ||--o{ saved_events : "saved by"
+    communities ||--o{ community_sponsors : "sponsored by"
+
+    users {
+        serial id PK
+        varchar name "NOT NULL"
+        varchar email "UNIQUE NOT NULL"
+        varchar password "NOT NULL"
+        varchar role "default 'member'"
+        boolean is_admin
+        text interests
+        text bio
+        varchar avatar_url
+        varchar banner_image
+        boolean email_verified
+        varchar verification_token
+        varchar reset_token
+        timestamptz reset_token_expires
+        varchar gender "migration v4"
+        timestamptz deleted_at "soft delete (v5)"
+        timestamptz created_at
+    }
+
+    communities {
+        serial id PK
+        varchar name "NOT NULL"
+        text description "NOT NULL"
+        varchar category
+        varchar website
+        int owner_id FK "-> users"
+        int member_count
+        varchar banner_image
+        varchar logo
+        varchar facebook
+        varchar instagram
+        varchar linkedin
+        varchar tiktok
+        varchar location
+        boolean is_verified
+        boolean is_private
+        boolean member_approval
+        timestamptz deleted_at "soft delete (v5)"
+        timestamptz created_at
+    }
+
+    events {
+        serial id PK
+        int community_id FK "-> communities, NOT NULL"
+        varchar title "NOT NULL"
+        text description "NOT NULL"
+        timestamptz event_date "NOT NULL"
+        varchar location
+        int attendee_count
+        varchar banner_image
+        varchar start_time
+        timestamptz end_date
+        varchar end_time
+        varchar duration
+        varchar event_type "default 'physical'"
+        int max_attendees "seat limit"
+        boolean allow_guests
+        int guest_limit
+        timestamptz rsvp_deadline
+        varchar payment_type "default 'free'"
+        text topics
+        text hosts
+        text speakers
+        text agenda
+        text requirements
+        text instructions
+        varchar age_limit "migration v9"
+        boolean requires_documents "v9"
+        text document_instructions "v9"
+        timestamptz deleted_at "soft delete (v5)"
+        timestamptz created_at
+    }
+
+    rsvps {
+        serial id PK
+        int user_id FK "-> users, NOT NULL"
+        int event_id FK "-> events, NOT NULL"
+        varchar status "default 'attending'"
+        varchar full_name
+        varchar phone
+        varchar email
+        jsonb answers "per-question answers"
+        varchar document_url "v9, verification doc"
+        varchar document_name "v9"
+        varchar document_status "v9: pending/verified/rejected"
+        timestamptz document_reviewed_at "v9"
+        timestamptz created_at
+        string uq_key "UNIQUE(user_id, event_id)"
+    }
+
+    event_questions {
+        serial id PK
+        int event_id FK "-> events, NOT NULL"
+        text question "NOT NULL"
+        varchar type "text|textarea|select|file|image"
+        boolean required
+        jsonb options "for select type"
+        int sort_order
+        timestamptz created_at
+    }
+
+    reviews {
+        serial id PK
+        int user_id FK "-> users, NOT NULL"
+        int community_id FK "-> communities, nullable"
+        int event_id FK "-> events, nullable"
+        int rating "CHECK 1..5"
+        text comment
+        timestamptz created_at
+    }
+
+    community_members {
+        serial id PK
+        int user_id FK "-> users, NOT NULL"
+        int community_id FK "-> communities, NOT NULL"
+        timestamptz joined_at
+        string uq_key "UNIQUE(user_id, community_id)"
+    }
+
+    organizer_applications {
+        serial id PK
+        int user_id FK "-> users, NOT NULL"
+        varchar community_name "NOT NULL"
+        text description "NOT NULL"
+        text address
+        varchar contact_info
+        varchar phone
+        text social_media
+        varchar target_audience
+        varchar age_group
+        varchar category
+        varchar website
+        text documents_url
+        text motivation
+        varchar expected_members
+        varchar meeting_frequency
+        text experience
+        text venue_details
+        varchar org_type
+        date year_established
+        varchar facebook
+        varchar instagram
+        varchar linkedin
+        varchar tiktok
+        varchar contact_person_name
+        varchar position_role
+        text activities
+        text benefits
+        boolean info_accurate
+        varchar preferred_username
+        boolean authorized_representative
+        varchar certificate_file
+        varchar logo_file
+        varchar additional_doc_file
+        varchar status "default 'pending'"
+        text admin_notes
+        varchar temp_password
+        timestamptz deleted_at "soft delete (v5)"
+        timestamptz created_at
+        timestamptz reviewed_at
+        int reviewed_by FK "-> users, SET NULL"
+    }
+
+    announcements {
+        serial id PK
+        int community_id FK "-> communities, NOT NULL"
+        varchar title "NOT NULL"
+        text content "NOT NULL"
+        int created_by FK "-> users, NOT NULL"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    community_discussions {
+        serial id PK
+        int community_id FK "-> communities, NOT NULL"
+        int user_id FK "-> users, NOT NULL"
+        text content "NOT NULL"
+        int parent_id FK "-> community_discussions (self)"
+        timestamptz created_at
+    }
+
+    activity_log {
+        serial id PK
+        int user_id FK "-> users, SET NULL"
+        varchar user_name
+        varchar action "NOT NULL"
+        text description
+        timestamptz created_at
+    }
+
+    notifications {
+        serial id PK
+        int user_id FK "-> users, NOT NULL"
+        varchar type "NOT NULL"
+        varchar title "NOT NULL"
+        text message
+        varchar link
+        boolean is_read
+        timestamptz created_at
+    }
+
+    saved_events {
+        serial id PK
+        int user_id FK "-> users, NOT NULL"
+        int event_id FK "-> events, NOT NULL"
+        timestamptz created_at
+        string uq_key "UNIQUE(user_id, event_id)"
+    }
+
+    community_sponsors {
+        serial id PK
+        int community_id FK "-> communities, NOT NULL"
+        varchar name "NOT NULL"
+        varchar website
+        varchar logo
+        timestamptz created_at
+    }

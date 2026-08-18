@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS events (
   agenda TEXT,
   requirements TEXT,
   instructions TEXT,
+  age_limit VARCHAR(100),
+  requires_documents BOOLEAN DEFAULT FALSE,
+  document_instructions TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -83,6 +86,10 @@ CREATE TABLE IF NOT EXISTS rsvps (
   phone VARCHAR(100),
   email VARCHAR(255),
   answers JSONB,
+  document_url VARCHAR(500),
+  document_name VARCHAR(255),
+  document_status VARCHAR(20),
+  document_reviewed_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(user_id, event_id)
 );

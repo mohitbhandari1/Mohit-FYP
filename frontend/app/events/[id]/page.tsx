@@ -32,10 +32,16 @@ export default function EventDetailPage() {
   // RSVP custom questions
   const [showRsvpQuestions, setShowRsvpQuestions] = useState(false);
   const [rsvpAnswers, setRsvpAnswers] = useState<Record<string, string>>({});
+  const [rsvpAnswerFiles, setRsvpAnswerFiles] = useState<Record<string, File>>({});
+  const [rsvpDocument, setRsvpDocument] = useState<File | null>(null);
   const [rsvpError, setRsvpError] = useState('');
   const [submittingRsvp, setSubmittingRsvp] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [showFullWarning, setShowFullWarning] = useState(false);
+  // Organizer per-attendee form review (shows all answers + uploaded files/images)
+  const [reviewUserId, setReviewUserId] = useState<number | null>(null);
+  const [reviewError, setReviewError] = useState('');
+  const reviewAttendee = attendees.find((a: any) => a.user_id === reviewUserId) || null;
 
   useEffect(() => {
     const fetchData = async () => {
@@ -96,9 +102,13 @@ export default function EventDetailPage() {
       setShowFullWarning(true);
       return;
     }
-    // Attending an event with custom registration questions → ask them first
-    if (status === 'attending' && event?.questions?.length > 0) {
+    // Attending an event with custom registration questions OR a required
+    // verification document → ask them first
+    if (status === 'attending' && (event?.questions?.length > 0 || event?.requires_documents)) {
       setRsvpAnswers({});
+      setRsvpAnswerFiles({});
+      setRsvpDocument(null);
+      setRsvpError('');
       setShowRsvpQuestions(true);
       return;
     }
@@ -109,9 +119,26 @@ export default function EventDetailPage() {
     setSubmittingRsvp(true);
     setRsvpError('');
     try {
+      // Multipart form — includes the verification document and file answers when required
+      const fd = new FormData();
+      fd.append('event_id', String(parseInt(id)));
+      fd.append('status', status);
+      fd.append('answers', JSON.stringify(answers));
+      // File/image-type registration questions: append each file with its question id
+      (event?.questions || [])
+        .filter((q: any) => q.type === 'file' || q.type === 'image')
+        .forEach((q: any) => {
+          const f = rsvpAnswerFiles[String(q.id)];
+          if (f) {
+            fd.append('answer_files', f);
+            fd.append('answer_file_questions', String(q.id));
+          }
+        });
+      if (rsvpDocument) fd.append('document', rsvpDocument);
+
       const res = await apiFetch('/api/engagement/rsvp', {
         method: 'POST',
-        body: JSON.stringify({ event_id: parseInt(id), status, answers }),
+        body: fd,
       });
       const data = await res.json().catch(() => null);
       if (res.ok) {
@@ -124,11 +151,53 @@ export default function EventDetailPage() {
           if (status === 'attending' && seatsLeft != null) setSeatsLeft((prev) => prev == null ? null : Math.max(0, prev - 1));
         }
         setShowRsvpQuestions(false);
+        setRsvpDocument(null);
+        setRsvpAnswerFiles({});
       } else {
         setRsvpError(data?.message || data?.error || 'Failed to RSVP');
       }
     } catch (err) { setRsvpError('Failed to RSVP. Please try again.'); }
     finally { setSubmittingRsvp(false); }
+  };
+
+  const handleAnswerStatus = async (userId: number, questionId: number, status: 'verified' | 'rejected' | '') => {
+    setReviewError('');
+    try {
+      const res = await apiFetch('/api/engagement/rsvp/answer-status', {
+        method: 'PATCH',
+        body: JSON.stringify({ event_id: parseInt(id), user_id: userId, question_id: questionId, status }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setAttendees((prev) => prev.map((a: any) =>
+          a.user_id === updated.user_id ? { ...a, answers: updated.answers } : a
+        ));
+      } else {
+        const data = await res.json().catch(() => null);
+        setReviewError(data?.error || 'Failed to update answer status');
+      }
+    } catch { setReviewError('Failed to update answer status'); }
+  };
+
+  const handleDocumentStatus = async (userId: number, status: 'verified' | 'rejected' | '') => {
+    setAttendeesError('');
+    try {
+      const res = await apiFetch('/api/engagement/rsvp/document-status', {
+        method: 'PATCH',
+        body: JSON.stringify({ event_id: parseInt(id), user_id: userId, status }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setAttendees((prev) => prev.map((a: any) =>
+          a.user_id === updated.user_id
+            ? { ...a, document_status: updated.document_status, document_reviewed_at: updated.document_reviewed_at }
+            : a
+        ));
+      } else {
+        const data = await res.json().catch(() => null);
+        setAttendeesError(data?.error || 'Failed to update document status');
+      }
+    } catch { setAttendeesError('Failed to update document status'); }
   };
 
   const handleDownloadAttendees = async () => {
@@ -273,9 +342,9 @@ export default function EventDetailPage() {
               <p className="text-sm font-medium text-slate-200">
                 {attendeeCount}{event.max_attendees ? ` / ${event.max_attendees}` : ''}
               </p>
-              {seatsLeft != null && (
-                <p className={`mt-1 text-xs font-semibold ${isFull ? 'text-red-400' : seatsLeft <= 10 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                  {isFull ? 'Event Full' : `${seatsLeft} seat${seatsLeft === 1 ? '' : 's'} left`}
+              {seatsLeft != null && seatsLeft <= 10 && (
+                <p className={`mt-1 text-xs font-semibold ${isFull ? 'text-red-400' : 'text-amber-400'}`}>
+                  {isFull ? 'Event Full' : `Only ${seatsLeft} seat${seatsLeft === 1 ? '' : 's'} left`}
                 </p>
               )}
             </div>
@@ -298,6 +367,20 @@ export default function EventDetailPage() {
                   <div className="mt-4 pt-4 border-t border-white/5">
                     <h3 className="text-md font-semibold text-slate-200 mb-2">Requirements</h3>
                     <p className="text-slate-400 whitespace-pre-wrap">{event.requirements}</p>
+                  </div>
+                )}
+                {event.age_limit && (
+                  <div className="mt-4 pt-4 border-t border-white/5">
+                    <h3 className="text-md font-semibold text-slate-200 mb-2">Age Limit</h3>
+                    <p className="text-slate-400">{event.age_limit}</p>
+                  </div>
+                )}
+                {event.requires_documents && (
+                  <div className="mt-4 pt-4 border-t border-white/5">
+                    <h3 className="text-md font-semibold text-slate-200 mb-2">📄 Verification Document Required</h3>
+                    <p className="text-slate-400 whitespace-pre-wrap">
+                      {event.document_instructions || 'Attendees must upload a verification document when RSVPing.'}
+                    </p>
                   </div>
                 )}
               </div>
@@ -343,12 +426,22 @@ export default function EventDetailPage() {
                                 <p className="text-xs text-slate-500 truncate">{(att.email || '')}</p>
                               </div>
                             </div>
-                            <span className={`flex-shrink-0 text-xs font-medium px-2.5 py-1 rounded-full ${
-                              att.status === 'attending'
-                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                            }`}>
-                              {att.status === 'attending' ? 'Attending' : 'Not attending'}
+                            <span className="flex-shrink-0 flex items-center gap-2">
+                              {((event.questions?.length > 0 && att.answers) || att.document_url) && (
+                                <button
+                                  onClick={() => setReviewUserId(att.user_id || att.id)}
+                                  className="text-[10px] px-2.5 py-1 rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-400 font-medium hover:bg-amber-500/20 transition-all"
+                                >
+                                  Review
+                                </button>
+                              )}
+                              <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                                att.status === 'attending'
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                  : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                              }`}>
+                                {att.status === 'attending' ? 'Attending' : 'Not attending'}
+                              </span>
                             </span>
                           </div>
                           {att.phone && <p className="text-xs text-slate-500 mt-1 ml-11">📞 {att.phone}</p>}
@@ -356,12 +449,73 @@ export default function EventDetailPage() {
                             <div className="ml-11 mt-1 space-y-0.5">
                               {event.questions.map((q: any) => {
                                 const val = att.answers[String(q.id)] ?? att.answers[q.question] ?? '';
-                                return val ? (
+                                if (!val) return null;
+                                return (
                                   <p key={q.id} className="text-xs text-slate-400">
-                                    <span className="text-slate-500">{q.question}:</span> {val}
+                                    <span className="text-slate-500">{q.question}:</span>{' '}
+                                    {q.type === 'file' ? (
+                                      <a href={`${BACKEND_URL}${val}`} target="_blank" rel="noopener noreferrer"
+                                        download={att.answers[String(q.id) + '_name'] || 'uploaded-file'}
+                                        className="inline-flex items-center gap-1 text-amber-400 hover:text-amber-300 transition-colors">
+                                        📄 {att.answers[String(q.id) + '_name'] || 'View file'}
+                                      </a>
+                                    ) : q.type === 'image' ? (
+                                      <a href={`${BACKEND_URL}${val}`} target="_blank" rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
+                                        <img src={`${BACKEND_URL}${val}`}
+                                          alt={att.answers[String(q.id) + '_name'] || 'uploaded image'}
+                                          className="w-8 h-8 rounded-md object-cover border border-white/10" />
+                                        {att.answers[String(q.id) + '_name'] || 'View image'}
+                                      </a>
+                                    ) : val}
                                   </p>
-                                ) : null;
+                                );
                               })}
+                            </div>
+                          )}
+                          {att.document_url && (
+                            <div className="ml-11 mt-1.5 space-y-1.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <a href={`${BACKEND_URL}${att.document_url}`} target="_blank" rel="noopener noreferrer"
+                                  download={att.document_name || 'verification-document'}
+                                  className="inline-flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 transition-colors">
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                                  </svg>
+                                  {att.document_name || 'Verification document'}
+                                </a>
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                                  att.document_status === 'verified'
+                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                    : att.document_status === 'rejected'
+                                      ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                                      : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                }`}>
+                                  {att.document_status === 'verified' ? 'Verified' : att.document_status === 'rejected' ? 'Rejected' : 'Pending'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => handleDocumentStatus(att.user_id, att.document_status === 'verified' ? '' : 'verified')}
+                                  title={att.document_status === 'verified' ? 'Click to reset to pending' : 'Mark as verified'}
+                                  className={`text-[10px] px-2.5 py-1 rounded-lg border font-medium transition-all ${
+                                    att.document_status === 'verified'
+                                      ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+                                      : 'border-white/10 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30'
+                                  }`}>
+                                  ✓ Verify
+                                </button>
+                                <button
+                                  onClick={() => handleDocumentStatus(att.user_id, att.document_status === 'rejected' ? '' : 'rejected')}
+                                  title={att.document_status === 'rejected' ? 'Click to reset to pending' : 'Mark as rejected'}
+                                  className={`text-[10px] px-2.5 py-1 rounded-lg border font-medium transition-all ${
+                                    att.document_status === 'rejected'
+                                      ? 'border-red-500/40 bg-red-500/15 text-red-300'
+                                      : 'border-white/10 text-slate-400 hover:text-red-400 hover:border-red-500/30'
+                                  }`}>
+                                  ✗ Reject
+                                </button>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -508,20 +662,37 @@ export default function EventDetailPage() {
 
                 {/* Seats full warning */}
                 {isFull && rsvpStatus !== 'attending' && (
-                  <button
-                    onClick={() => setShowFullWarning(true)}
-                    className="w-full mb-4 p-4 rounded-xl border border-red-500/25 bg-red-500/10 text-left transition-all hover:bg-red-500/15"
-                  >
-                    <div className="flex items-start gap-3">
-                      <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      <div>
-                        <p className="text-sm font-semibold text-red-400">This event is full!</p>
-                        <p className="text-xs text-red-300/80 mt-0.5">All seats are taken. Stay connected for future events from {event.community_name || 'this community'}.</p>
+                  isOwner ? (
+                    <div className="w-full mb-4 p-4 rounded-xl border border-amber-500/25 bg-amber-500/10">
+                      <div className="flex items-start gap-3">
+                        <svg className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-amber-400">This event is full</p>
+                          <p className="text-xs text-amber-200/80 mt-0.5">Increase the seat limit to open more places.</p>
+                          <Link href={`/events/${id}/edit`} className="inline-flex mt-3 px-3 py-1.5 rounded-lg bg-amber-400 text-slate-950 text-xs font-semibold hover:bg-amber-300 transition-colors">
+                            Increase seat limit
+                          </Link>
+                        </div>
                       </div>
                     </div>
-                  </button>
+                  ) : (
+                    <button
+                      onClick={() => setShowFullWarning(true)}
+                      className="w-full mb-4 p-4 rounded-xl border border-red-500/25 bg-red-500/10 text-left transition-all hover:bg-red-500/15"
+                    >
+                      <div className="flex items-start gap-3">
+                        <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <div>
+                          <p className="text-sm font-semibold text-red-400">This event is full!</p>
+                          <p className="text-xs text-red-300/80 mt-0.5">All seats are taken. Stay connected for future events from {event.community_name || 'this community'}.</p>
+                        </div>
+                      </div>
+                    </button>
+                  )
                 )}
 
                 <div className="space-y-3">
@@ -535,7 +706,7 @@ export default function EventDetailPage() {
                           : 'bg-white/5 text-slate-300 border border-white/10 hover:bg-emerald-500/10 hover:text-emerald-400 hover:border-emerald-500/20'
                     }`}
                   >
-                    {isFull ? '✕ Seats Full' : '✓ I&apos;m Attending'}
+                    {isFull ? '✕ Seats Full' : "✓ I'm Attending"}
                   </button>
                   <button
                     onClick={() => handleRsvp('not_attending')}
@@ -654,6 +825,52 @@ export default function EventDetailPage() {
                           <option key={opt} value={opt} className="bg-slate-900">{opt}</option>
                         ))}
                       </select>
+                    ) : q.type === 'file' ? (
+                      <div>
+                        <input
+                          type="file"
+                          accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp"
+                          onChange={(e) => {
+                            setRsvpAnswerFiles((prev) => {
+                              const next = { ...prev };
+                              if (e.target.files?.[0]) next[String(q.id)] = e.target.files[0];
+                              else delete next[String(q.id)];
+                              return next;
+                            });
+                            if (rsvpError) setRsvpError('');
+                          }}
+                          className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer"
+                        />
+                        <p className="mt-1 text-xs text-slate-500">PDF, DOC, DOCX, JPG, PNG (max 10 MB)</p>
+                        {rsvpAnswerFiles[String(q.id)] && (
+                          <p className="mt-1.5 text-xs text-emerald-400 font-medium">✓ {rsvpAnswerFiles[String(q.id)].name}</p>
+                        )}
+                      </div>
+                    ) : q.type === 'image' ? (
+                      <div>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/gif,image/webp"
+                          onChange={(e) => {
+                            setRsvpAnswerFiles((prev) => {
+                              const next = { ...prev };
+                              if (e.target.files?.[0]) next[String(q.id)] = e.target.files[0];
+                              else delete next[String(q.id)];
+                              return next;
+                            });
+                            if (rsvpError) setRsvpError('');
+                          }}
+                          className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer"
+                        />
+                        <p className="mt-1 text-xs text-slate-500">JPG, PNG, GIF, WEBP (max 10 MB)</p>
+                        {rsvpAnswerFiles[String(q.id)] && (
+                          <div className="mt-2 flex items-center gap-2.5">
+                            <img src={URL.createObjectURL(rsvpAnswerFiles[String(q.id)])} alt="Upload preview"
+                              className="w-14 h-14 rounded-lg object-cover border border-white/10" />
+                            <p className="text-xs text-emerald-400 font-medium">{rsvpAnswerFiles[String(q.id)].name}</p>
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <input
                         type="text"
@@ -665,11 +882,48 @@ export default function EventDetailPage() {
                     )}
                   </div>
                 ))}
+
+                {/* Verification document upload (required when organizer asked for one) */}
+                {event.requires_documents && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-200 mb-1.5">
+                      Verification Document <span className="text-red-400">*</span>
+                    </label>
+                    {event.document_instructions && (
+                      <p className="text-xs text-slate-500 mb-2">{event.document_instructions}</p>
+                    )}
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp"
+                      onChange={(e) => {
+                        setRsvpDocument(e.target.files?.[0] || null);
+                        if (rsvpError) setRsvpError('');
+                      }}
+                      className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">PDF, DOC, DOCX, JPG, PNG (max 10 MB)</p>
+                    {rsvpDocument && (
+                      <p className="mt-1.5 text-xs text-emerald-400 font-medium">✓ {rsvpDocument.name}</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-3 mt-6">
                 <button
-                  onClick={() => submitRsvp('attending', rsvpAnswers)}
+                  onClick={() => {
+                    if (event.requires_documents && !rsvpDocument) {
+                      setRsvpError('Please upload the required verification document to confirm your seat.');
+                      return;
+                    }
+                    const missingFileAnswer = (event?.questions || [])
+                      .some((q: any) => (q.type === 'file' || q.type === 'image') && q.required && !rsvpAnswerFiles[String(q.id)]);
+                    if (missingFileAnswer) {
+                      setRsvpError('Please upload the required file/image for all file upload questions.');
+                      return;
+                    }
+                    submitRsvp('attending', rsvpAnswers);
+                  }}
                   disabled={submittingRsvp}
                   className="flex-1 px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-semibold shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 transition-all disabled:opacity-50"
                 >
@@ -683,6 +937,157 @@ export default function EventDetailPage() {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Organizer per-attendee form review modal */}
+      {reviewAttendee && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" onClick={() => setReviewUserId(null)} />
+          <div className="relative w-full max-w-lg rounded-2xl border border-white/10 bg-slate-900 shadow-2xl shadow-black/50 max-h-[85vh] overflow-y-auto animate-scale-in">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-lg font-semibold text-slate-100">Review Response</h3>
+                <button onClick={() => setReviewUserId(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <p className="text-sm text-slate-400 mb-5">
+                {reviewAttendee.full_name || reviewAttendee.name}
+                {reviewAttendee.email && <span className="text-slate-500"> · {reviewAttendee.email}</span>}
+              </p>
+
+              {reviewError && (
+                <div className="mb-4 p-3 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-xs">{reviewError}</div>
+              )}
+
+              {/* Question answers — including uploaded files and images with review status */}
+              {event.questions?.length > 0 && reviewAttendee.answers ? (
+                <div className="space-y-3">
+                  {event.questions.map((q: any) => {
+                    const val = reviewAttendee.answers[String(q.id)] ?? reviewAttendee.answers[q.question] ?? '';
+                    if (!val) return null;
+                    const ansStatus = reviewAttendee.answers[String(q.id) + '_status'];
+                    return (
+                      <div key={q.id} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                        <p className="text-sm font-medium text-slate-200 mb-1.5">{q.question}</p>
+                        {q.type === 'file' ? (
+                          <a href={`${BACKEND_URL}${val}`} target="_blank" rel="noopener noreferrer"
+                            download={reviewAttendee.answers[String(q.id) + '_name'] || 'uploaded-file'}
+                            className="inline-flex items-center gap-1.5 text-sm text-amber-400 hover:text-amber-300 transition-colors">
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                            </svg>
+                            {reviewAttendee.answers[String(q.id) + '_name'] || 'View file'}
+                          </a>
+                        ) : q.type === 'image' ? (
+                          <a href={`${BACKEND_URL}${val}`} target="_blank" rel="noopener noreferrer"
+                            title={reviewAttendee.answers[String(q.id) + '_name'] || 'Open image'}
+                            className="inline-block">
+                            <img src={`${BACKEND_URL}${val}`}
+                              alt={reviewAttendee.answers[String(q.id) + '_name'] || 'uploaded image'}
+                              className="w-28 h-28 rounded-xl object-cover border border-white/10 hover:border-amber-500/40 transition-all" />
+                          </a>
+                        ) : (
+                          <p className="text-sm text-slate-300 whitespace-pre-wrap">{val}</p>
+                        )}
+
+                        {/* Review status for file/image answers */}
+                        {(q.type === 'file' || q.type === 'image') && (
+                          <div className="mt-3 pt-3 border-t border-white/5 flex items-center gap-2 flex-wrap">
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                              ansStatus === 'verified'
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                : ansStatus === 'rejected'
+                                  ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                                  : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                            }`}>
+                              {ansStatus === 'verified' ? 'Verified' : ansStatus === 'rejected' ? 'Rejected' : 'Pending'}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleAnswerStatus(reviewAttendee.user_id, q.id, ansStatus === 'verified' ? '' : 'verified')}
+                                title={ansStatus === 'verified' ? 'Click to reset to pending' : 'Mark as verified'}
+                                className={`text-[10px] px-2.5 py-1 rounded-lg border font-medium transition-all ${
+                                  ansStatus === 'verified'
+                                    ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+                                    : 'border-white/10 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30'
+                                }`}>
+                                ✓ Verify
+                              </button>
+                              <button
+                                onClick={() => handleAnswerStatus(reviewAttendee.user_id, q.id, ansStatus === 'rejected' ? '' : 'rejected')}
+                                title={ansStatus === 'rejected' ? 'Click to reset to pending' : 'Mark as rejected'}
+                                className={`text-[10px] px-2.5 py-1 rounded-lg border font-medium transition-all ${
+                                  ansStatus === 'rejected'
+                                    ? 'border-red-500/40 bg-red-500/15 text-red-300'
+                                    : 'border-white/10 text-slate-400 hover:text-red-400 hover:border-red-500/30'
+                                }`}>
+                                ✗ Reject
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">No registration question answers.</p>
+              )}
+
+              {/* Verification document + review actions */}
+              {reviewAttendee.document_url && (
+                <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                  <p className="text-sm font-medium text-slate-200 mb-1.5">Verification Document</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <a href={`${BACKEND_URL}${reviewAttendee.document_url}`} target="_blank" rel="noopener noreferrer"
+                      download={reviewAttendee.document_name || 'verification-document'}
+                      className="inline-flex items-center gap-1.5 text-sm text-amber-400 hover:text-amber-300 transition-colors">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                      </svg>
+                      {reviewAttendee.document_name || 'View document'}
+                    </a>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                      reviewAttendee.document_status === 'verified'
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                        : reviewAttendee.document_status === 'rejected'
+                          ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                          : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                    }`}>
+                      {reviewAttendee.document_status === 'verified' ? 'Verified' : reviewAttendee.document_status === 'rejected' ? 'Rejected' : 'Pending'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-3">
+                    <button
+                      onClick={() => handleDocumentStatus(reviewAttendee.user_id, reviewAttendee.document_status === 'verified' ? '' : 'verified')}
+                      title={reviewAttendee.document_status === 'verified' ? 'Click to reset to pending' : 'Mark as verified'}
+                      className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
+                        reviewAttendee.document_status === 'verified'
+                          ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+                          : 'border-white/10 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30'
+                      }`}>
+                      ✓ Verify
+                    </button>
+                    <button
+                      onClick={() => handleDocumentStatus(reviewAttendee.user_id, reviewAttendee.document_status === 'rejected' ? '' : 'rejected')}
+                      title={reviewAttendee.document_status === 'rejected' ? 'Click to reset to pending' : 'Mark as rejected'}
+                      className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
+                        reviewAttendee.document_status === 'rejected'
+                          ? 'border-red-500/40 bg-red-500/15 text-red-300'
+                          : 'border-white/10 text-slate-400 hover:text-red-400 hover:border-red-500/30'
+                      }`}>
+                      ✗ Reject
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

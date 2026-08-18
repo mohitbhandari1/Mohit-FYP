@@ -44,7 +44,7 @@ const SEATS_REMAINING = `CASE WHEN e.max_attendees IS NULL THEN NULL ELSE GREATE
 
 interface EventQuestion {
   question: string;
-  type: 'text' | 'textarea' | 'select';
+  type: 'text' | 'textarea' | 'select' | 'file' | 'image';
   required: boolean;
   options: string[];
   sort_order: number;
@@ -66,7 +66,7 @@ function parseQuestions(raw: any): EventQuestion[] {
     .filter((q) => q && typeof q.question === 'string' && q.question.trim())
     .map((q, i) => ({
       question: q.question.trim(),
-      type: ['text', 'textarea', 'select'].includes(q.type) ? q.type : 'text',
+      type: ['text', 'textarea', 'select', 'file', 'image'].includes(q.type) ? q.type : 'text',
       required: !!q.required,
       options: Array.isArray(q.options) ? q.options.map(String).filter(Boolean) : [],
       sort_order: i,
@@ -109,6 +109,7 @@ router.get('/', async (req, res, next) => {
   const category = req.query.category as string;
   const search = req.query.search as string;
   const eventType = req.query.event_type as string;
+  const filter = req.query.filter as string; // today | week | month | fourMonths
   const limit = req.query.limit ? Number(req.query.limit) : undefined;
   const page = Number(req.query.page) || 1;
   const pageSize = Number(req.query.pageSize) || 20;
@@ -119,6 +120,7 @@ router.get('/', async (req, res, next) => {
               e.location, e.event_type, e.community_id, e.attendee_count, e.max_attendees,
               ${SEATS_REMAINING},
               e.banner_image, e.topics, e.payment_type, e.duration,
+              e.age_limit, e.requires_documents, e.document_instructions,
               c.name as community_name, c.owner_id, c.logo as community_logo,
               u.name as community_owner_name,
               (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE event_id = e.id) as avg_rating
@@ -138,6 +140,22 @@ router.get('/', async (req, res, next) => {
     if (past) {
       sql += ` AND e.event_date < NOW()`;
     }
+    if (filter) {
+      // Date-range filters based on the event date.
+      if (filter === 'today') {
+        sql += ` AND e.event_date >= date_trunc('day', NOW())
+                AND e.event_date < date_trunc('day', NOW()) + INTERVAL '1 day'`;
+      } else if (filter === 'week') {
+        sql += ` AND e.event_date >= NOW()
+                AND e.event_date < NOW() + INTERVAL '7 days'`;
+      } else if (filter === 'month') {
+        sql += ` AND e.event_date >= NOW()
+                AND e.event_date < NOW() + INTERVAL '30 days'`;
+      } else if (filter === 'fourMonths') {
+        sql += ` AND e.event_date >= NOW()
+                AND e.event_date < NOW() + INTERVAL '4 months'`;
+      }
+    }
     if (category) {
       sql += ` AND (e.topics ILIKE $${paramIdx} OR c.category ILIKE $${paramIdx})`;
       params.push(`%${category}%`);
@@ -153,7 +171,8 @@ router.get('/', async (req, res, next) => {
       paramIdx++;
     }
 
-    sql += ' ORDER BY e.event_date' + (upcoming ? ' ASC' : ' DESC');
+    // When a date-range filter is active, show the soonest events first.
+    sql += ' ORDER BY e.event_date' + (upcoming || filter ? ' ASC' : ' DESC');
 
     if (limit) {
       sql += ` LIMIT $${paramIdx++}`;
@@ -165,7 +184,41 @@ router.get('/', async (req, res, next) => {
     }
 
     const result = await query(sql, params);
-    res.json(result.rows);
+
+    // Related events from OTHER categories (upcoming first). Returned when a
+    // category filter is active and few/no events match, so the page never
+    // looks empty and users discover events in similar categories.
+    let related: any[] = [];
+    const includeRelated = req.query.includeRelated === 'true';
+    if (category && includeRelated && result.rows.length < 4) {
+      const excludeIds = result.rows.map((r: any) => r.id);
+      const relatedRes = await query(
+        `SELECT e.id, e.title, e.description, e.event_date, e.start_time, e.end_date, e.end_time,
+                e.location, e.event_type, e.community_id, e.attendee_count, e.max_attendees,
+                ${SEATS_REMAINING},
+                e.banner_image, e.topics, e.payment_type, e.duration,
+                e.age_limit, e.requires_documents, e.document_instructions,
+                c.name as community_name, c.owner_id, c.logo as community_logo,
+                u.name as community_owner_name,
+                (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE event_id = e.id) as avg_rating
+         FROM events e JOIN communities c ON e.community_id = c.id
+         LEFT JOIN users u ON c.owner_id = u.id
+         WHERE e.deleted_at IS NULL AND c.deleted_at IS NULL
+           AND (e.topics IS NULL OR e.topics NOT ILIKE $1)
+           AND (c.category IS NULL OR c.category NOT ILIKE $1)
+           AND NOT (e.id = ANY($2::int[]))
+         ORDER BY e.event_date ASC
+         LIMIT 3`,
+        [`%${category}%`, excludeIds.length ? excludeIds : [0]]
+      );
+      related = relatedRes.rows;
+    }
+
+    if (includeRelated) {
+      res.json({ events: result.rows, related, total: result.rows.length });
+    } else {
+      res.json(result.rows);
+    }
   } catch (error) {
     next(error);
   }
@@ -180,6 +233,7 @@ router.get('/upcoming', async (req, res, next) => {
               e.event_type, e.community_id, e.attendee_count, e.max_attendees,
               ${SEATS_REMAINING},
               e.banner_image, e.topics, e.payment_type,
+              e.age_limit, e.requires_documents, e.document_instructions,
               c.name as community_name, c.logo as community_logo,
               u.name as community_owner_name,
               (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE event_id = e.id) as avg_rating
@@ -227,6 +281,7 @@ router.get('/organizer', authMiddleware, async (req: AuthRequest, res, next) => 
               e.location, e.event_type, e.community_id, e.attendee_count, e.max_attendees,
               ${SEATS_REMAINING},
               e.banner_image, e.topics, e.payment_type,
+              e.age_limit, e.requires_documents, e.document_instructions,
               c.name as community_name
        FROM events e
        JOIN communities c ON e.community_id = c.id
@@ -279,7 +334,8 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
     community_id, title, description, event_date, start_time, end_date, end_time,
     duration, location, event_type, max_attendees, allow_guests,
     guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
-    agenda, requirements, instructions, questions
+    agenda, requirements, instructions, questions,
+    age_limit, requires_documents, document_instructions
   } = req.body;
 
   if (!community_id || !title || !description || !event_date) {
@@ -306,14 +362,16 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
       `INSERT INTO events (community_id, title, description, event_date, start_time, end_date, end_time,
         duration, location, event_type, banner_image, max_attendees, allow_guests,
         guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
-        agenda, requirements, instructions, attendee_count)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 0)
+        agenda, requirements, instructions,
+        age_limit, requires_documents, document_instructions, attendee_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 0)
        RETURNING *`,
       [community_id, title, description, event_date, start_time || null, end_date || null, end_time || null,
        duration || null, location || null, event_type || 'physical', bannerImage,
        max_attendees || null, allow_guests || false, guest_limit || null,
        rsvp_deadline || null, payment_type || 'free', topics || null, hosts || null, speakers || null,
-       agenda || null, requirements || null, instructions || null]
+       agenda || null, requirements || null, instructions || null,
+       age_limit || null, requires_documents === 'true' || requires_documents === true, document_instructions || null]
     );
 
     // Save custom registration questions (seat limit lives in max_attendees)
@@ -344,7 +402,8 @@ router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), asyn
     title, description, event_date, start_time, end_date, end_time,
     duration, location, event_type, max_attendees, allow_guests,
     guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
-    agenda, requirements, instructions, questions
+    agenda, requirements, instructions, questions,
+    age_limit, requires_documents, document_instructions
   } = req.body;
 
   try {
@@ -377,18 +436,24 @@ router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), asyn
         end_date = COALESCE($5, end_date), end_time = COALESCE($6, end_time),
         duration = COALESCE($7, duration), location = COALESCE($8, location),
         event_type = COALESCE($9, event_type), banner_image = COALESCE($10, banner_image),
-        max_attendees = COALESCE($11, max_attendees), allow_guests = COALESCE($12, allow_guests),
-        guest_limit = COALESCE($13, guest_limit), rsvp_deadline = COALESCE($14, rsvp_deadline),
-        payment_type = COALESCE($15, payment_type), topics = COALESCE($16, topics),
+        max_attendees = CASE WHEN $11 = '' THEN NULL ELSE COALESCE($11::int, max_attendees) END,
+        allow_guests = CASE WHEN $12 = '' THEN NULL ELSE COALESCE($12::boolean, allow_guests) END,
+        guest_limit = CASE WHEN $13 = '' THEN NULL ELSE COALESCE($13::int, guest_limit) END,
+        rsvp_deadline = COALESCE($14, rsvp_deadline),
+        payment_type = COALESCE($15, payment_type),        topics = $16,
         hosts = COALESCE($17, hosts), speakers = COALESCE($18, speakers),
         agenda = COALESCE($19, agenda), requirements = COALESCE($20, requirements),
-        instructions = COALESCE($21, instructions)
-       WHERE id = $22 RETURNING *`,
+        instructions = COALESCE($21, instructions),
+        age_limit = CASE WHEN $22 = '' THEN NULL ELSE COALESCE($22, age_limit) END,
+        requires_documents = CASE WHEN $23 = '' THEN NULL ELSE COALESCE($23::boolean, requires_documents) END,
+        document_instructions = CASE WHEN $24 = '' THEN NULL ELSE COALESCE($24, document_instructions) END
+       WHERE id = $25 RETURNING *`,
       [title || null, description || null, event_date || null, start_time || null,
        end_date || null, end_time || null, duration || null, location || null,
-       event_type || null, banner_image || null, max_attendees || null, allow_guests ?? null,
+       event_type || null, banner_image || null, max_attendees ?? null, allow_guests ?? null,
        guest_limit || null, rsvp_deadline || null, payment_type || null, topics || null,
        hosts || null, speakers || null, agenda || null, requirements || null, instructions || null,
+       age_limit || null, requires_documents ?? null, document_instructions || null,
        eventId]
     );
 
@@ -512,6 +577,7 @@ router.get('/:id/export', authMiddleware, async (req: AuthRequest, res, next) =>
     );
     const rsvpRes = await query(
       `SELECT r.status, r.full_name, r.phone, r.email, r.answers, r.created_at,
+              r.document_url, r.document_name, r.document_status,
               u.name as user_name, u.email as user_email
        FROM rsvps r JOIN users u ON r.user_id = u.id
        WHERE r.event_id = $1
@@ -519,7 +585,7 @@ router.get('/:id/export', authMiddleware, async (req: AuthRequest, res, next) =>
       [eventId]
     );
 
-    const header = ['Name', 'Email', 'Phone', 'Status', 'RSVP Date', ...questions.rows.map((q: any) => q.question)];
+    const header = ['Name', 'Email', 'Phone', 'Status', 'RSVP Date', 'Verification Document', 'Document Status', ...questions.rows.map((q: any) => q.question)];
     const rows = rsvpRes.rows.map((r: any) => {
       const answers: Record<string, any> = r.answers || {};
       return [
@@ -528,6 +594,8 @@ router.get('/:id/export', authMiddleware, async (req: AuthRequest, res, next) =>
         r.phone || '',
         r.status === 'attending' ? 'Attending' : 'Not attending',
         r.created_at ? new Date(r.created_at).toLocaleString() : '',
+        r.document_url || '',
+        r.document_status || 'Pending',
         ...questions.rows.map((q: any) => answers[String(q.id)] ?? answers[q.question] ?? ''),
       ];
     });

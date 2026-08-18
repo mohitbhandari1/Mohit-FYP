@@ -308,3 +308,56 @@ a, button, input, select, textarea, [role="button"] {
   from { width: 100%; }
   to { width: 0%; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   COMMUNITY JOURNEY — ORGANIZER SECTION
+   Sequential step reveal + connected path draw-in.
+   Triggered by IntersectionObserver (class applied via JS).
+   ═══════════════════════════════════════════════════════════ */
+
+@keyframes journeyStepIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.journey-step {
+  animation: journeyStepIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes journeyLineDraw {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+/* Gentle breathing pulse for stat section icons */
+@keyframes statIconPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+
+.stat-icon-pulse {
+  animation: statIconPulse 3.2s ease-in-out infinite;
+}
+
+.journey-line-draw {
+  transform-origin: top;
+  animation: journeyLineDraw 1.1s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+.journey-particle {
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: #fcd34d;
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.8);
+  will-change: top, opacity;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-step,
+  .journey-line-draw,
+  .stat-icon-pulse {
+    animation: none;
+  }
+}

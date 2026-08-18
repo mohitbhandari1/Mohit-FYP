@@ -8,7 +8,133 @@ import Pagination from '../components/Pagination';
 import { SkeletonEventGrid } from '../components/Skeleton';
 import { apiFetch, BACKEND_URL } from '../lib/auth';
 
-type DateFilter = 'all' | 'today' | 'week' | 'month';
+type DateFilter = 'all' | 'today' | 'week' | 'month' | 'fourMonths';
+
+const CATEGORIES = [
+  'All',
+  'Technology',
+  'Sports',
+  'Art',
+  'Music',
+  'Science',
+  'Gaming',
+  'Education',
+  'Health',
+  'Business',
+  'Social',
+  'Other',
+];
+
+function EventCard({
+  event,
+  index,
+  savedEvents,
+  rsvpStatus,
+  onSave,
+  formatDateTime,
+}: {
+  event: any;
+  index: number;
+  savedEvents: Set<number>;
+  rsvpStatus: Record<number, string>;
+  onSave: (eventId: number) => void;
+  formatDateTime: (dateStr: string, timeStr?: string) => string;
+}) {
+  return (
+    <div
+      className="group rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl shadow-lg hover:shadow-amber-500/10 hover:border-amber-500/20 transition-all duration-500 hover:-translate-y-1 overflow-hidden opacity-0 animate-fade-in-up"
+      style={{ animationDelay: `${index * 80}ms`, animationFillMode: 'forwards' }}
+    >
+      {/* Banner */}
+      <Link href={`/events/${event.id}`}>
+        <div className="relative aspect-video bg-gradient-to-br from-amber-900/30 to-orange-900/30 overflow-hidden">
+          {event.banner_image ? (
+            <img src={`${BACKEND_URL}${event.banner_image}`} alt={event.title}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <svg className="w-16 h-16 text-amber-600/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+            </div>
+          )}
+          {/* Save button */}
+          <button
+            onClick={(e) => { e.preventDefault(); onSave(event.id); }}
+            className="absolute top-3 right-3 p-2 rounded-full bg-black/40 backdrop-blur-sm border border-white/10 hover:bg-black/60 transition-all"
+          >
+            <svg className={`w-4 h-4 ${savedEvents.has(event.id) ? 'text-amber-400 fill-amber-400' : 'text-white'}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+            </svg>
+          </button>
+        </div>
+      </Link>
+
+      {/* Content */}
+      <div className="p-5">
+        <Link href={`/events/${event.id}`}>
+          <h3 className="text-lg font-semibold text-slate-100 group-hover:text-amber-400 transition-colors line-clamp-2 leading-snug">
+            {event.title}
+          </h3>
+        </Link>
+
+        {/* Date · Time · Location — one line */}
+        {(event.event_date || event.location) && (
+          <div className="mt-2 text-sm text-slate-300">
+            {event.event_date && <span>{formatDateTime(event.event_date, event.start_time)}</span>}
+            {event.event_date && event.location && <span> </span>}
+            {event.location && <span>{event.location}</span>}
+          </div>
+        )}
+
+        {/* by Organizer */}
+        {event.community_owner_name && (
+          <div className="text-sm text-slate-400">by {event.community_owner_name}</div>
+        )}
+
+        {/* Rating */}
+        {event.avg_rating && (
+          <div className="text-sm text-amber-400">
+            <svg className="inline w-4 h-4 -mt-0.5 mr-1" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+            {event.avg_rating}
+          </div>
+        )}
+
+        {/* Attendees & seats remaining */}
+        <div className="flex flex-wrap items-center gap-2 mt-1">
+          {(event.attendee_count ?? 0) > 0 && (
+            <div className="text-sm text-slate-400">{event.attendee_count} attendees</div>
+          )}
+          {event.seats_remaining != null && event.seats_remaining <= 10 && (
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+              event.seats_remaining <= 0
+                ? 'bg-red-500/15 text-red-400 border-red-500/20'
+                : 'bg-amber-500/15 text-amber-400 border-amber-500/20'
+            }`}>
+              {event.seats_remaining <= 0 ? 'Event Full' : `Only ${event.seats_remaining} seat${event.seats_remaining === 1 ? '' : 's'} left`}
+            </span>
+          )}
+        </div>
+
+        {/* RSVP badge */}
+        {rsvpStatus[event.id] === 'attending' && (
+          <div className="mt-2">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Going
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function EventsPage() {
   const [events, setEvents] = useState<any[]>([]);
@@ -18,6 +144,9 @@ export default function EventsPage() {
   const [rsvpStatus, setRsvpStatus] = useState<Record<number, string>>({});
   const [savedEvents, setSavedEvents] = useState<Set<number>>(new Set());
   const [activeFilter, setActiveFilter] = useState<DateFilter>('all');
+  const [category, setCategory] = useState('All');
+  const [categories, setCategories] = useState<string[]>(CATEGORIES);
+  const [relatedEvents, setRelatedEvents] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -25,17 +154,43 @@ export default function EventsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [activeFilter, searchQuery]);
+    setRelatedEvents([]);
+  }, [activeFilter, searchQuery, category]);
+
+  // Load real categories from the backend and merge with the defaults
+  useEffect(() => {
+    apiFetch('/api/communities/categories')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((cats: string[]) => {
+        if (Array.isArray(cats) && cats.length) {
+          const merged = [...CATEGORIES];
+          for (const c of cats) {
+            if (!merged.some((m) => m.toLowerCase() === c.toLowerCase())) {
+              merged.push(c);
+            }
+          }
+          setCategories(merged);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const fetchEvents = useCallback(async () => {
     setFetching(true);
     try {
       const filterParam = activeFilter !== 'all' ? `filter=${activeFilter}` : '';
       const searchParam = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : '';
-      const eventsRes = await apiFetch(`/api/events?${filterParam}${searchParam}&limit=${ITEMS_PER_PAGE}&page=${page}`);
+      const categoryParam = category !== 'All' ? `&category=${encodeURIComponent(category)}&includeRelated=true` : '';
+      const eventsRes = await apiFetch(`/api/events?${filterParam}${searchParam}${categoryParam}&limit=${ITEMS_PER_PAGE}&page=${page}`);
       const eventsData = await eventsRes.json();
-      setEvents(Array.isArray(eventsData) ? eventsData : eventsData.events || []);
-      if (eventsData.totalPages) setTotalPages(eventsData.totalPages);
+      if (Array.isArray(eventsData)) {
+        setEvents(eventsData);
+        setRelatedEvents([]);
+      } else {
+        setEvents(eventsData.events || []);
+        setRelatedEvents(eventsData.related || []);
+        if (eventsData.totalPages) setTotalPages(eventsData.totalPages);
+      }
 
       const meRes = await apiFetch('/api/auth/me');
       if (meRes.ok) {
@@ -56,7 +211,7 @@ export default function EventsPage() {
       setTotalPages(Math.max(1, Math.ceil((Array.isArray(eventsData) ? eventsData.length : eventsData.total || ITEMS_PER_PAGE) / ITEMS_PER_PAGE)));
     } catch (err) { console.error('Failed to load events'); }
     finally { setInitialLoading(false); setFetching(false); }
-  }, [activeFilter, searchQuery, page]);
+  }, [activeFilter, searchQuery, page, category]);
 
   // Debounced fetch for search/filter changes
   useEffect(() => {
@@ -104,6 +259,7 @@ export default function EventsPage() {
     { label: 'Today', value: 'today' },
     { label: 'This Week', value: 'week' },
     { label: 'This Month', value: 'month' },
+    { label: 'Next 4 Months', value: 'fourMonths' },
   ];
 
   if (initialLoading) return (
@@ -170,6 +326,24 @@ export default function EventsPage() {
                 </div>
               )}
             </div>
+            {/* Category filter */}
+            <div className="relative">
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="appearance-none w-full sm:w-44 rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-xl py-2.5 pl-4 pr-10 text-sm text-slate-100 cursor-pointer focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 transition-all"
+              >
+                {categories.map((cat) => (
+                  <option key={cat} value={cat} className="bg-slate-900 text-slate-200">
+                    {cat}
+                  </option>
+                ))}
+              </select>
+              <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+
             <div className="flex gap-1 bg-white/[0.03] backdrop-blur-xl rounded-xl border border-white/10 p-1">
               {filters.map((filter) => (
                 <button
@@ -188,113 +362,62 @@ export default function EventsPage() {
           </div>
 
           {/* Events Grid */}
+          {events.length === 0 && relatedEvents.length > 0 && (
+            <div className="text-center py-10 rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl mb-8 opacity-0 animate-fade-in-up animate-fill-both">
+              <p className="text-slate-300">
+                No exact matches for <span className="text-amber-400 font-medium">“{category}”</span>.
+              </p>
+              <p className="text-slate-500 text-sm mt-1">Here are related events you might like:</p>
+            </div>
+          )}
+
           {events.length > 0 ? (
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {events.map((event: any, i: number) => (
-                <div
+                <EventCard
                   key={event.id}
-                  className="group rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl shadow-lg hover:shadow-amber-500/10 hover:border-amber-500/20 transition-all duration-500 hover:-translate-y-1 overflow-hidden opacity-0 animate-fade-in-up"
-                  style={{ animationDelay: `${i * 80}ms`, animationFillMode: 'forwards' }}
-                >
-                  {/* Banner */}
-                  <Link href={`/events/${event.id}`}>
-                    <div className="relative aspect-video bg-gradient-to-br from-amber-900/30 to-orange-900/30 overflow-hidden">
-                      {event.banner_image ? (
-                        <img src={`${BACKEND_URL}${event.banner_image}`} alt={event.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <svg className="w-16 h-16 text-amber-600/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                        </div>
-                      )}
-                      {/* Save button */}
-                      <button
-                        onClick={(e) => { e.preventDefault(); handleSaveEvent(event.id); }}
-                        className="absolute top-3 right-3 p-2 rounded-full bg-black/40 backdrop-blur-sm border border-white/10 hover:bg-black/60 transition-all"
-                      >
-                        <svg className={`w-4 h-4 ${savedEvents.has(event.id) ? 'text-amber-400 fill-amber-400' : 'text-white'}`}
-                          fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                            d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-                        </svg>
-                      </button>
-                    </div>
-                  </Link>
-
-                  {/* Content */}
-                  <div className="p-5">
-                    <Link href={`/events/${event.id}`}>
-                      <h3 className="text-lg font-semibold text-slate-100 group-hover:text-amber-400 transition-colors line-clamp-2 leading-snug">
-                        {event.title}
-                      </h3>
-                    </Link>
-
-                    {/* Date · Time · Location — one line */}
-                    {(event.event_date || event.location) && (
-                      <div className="mt-2 text-sm text-slate-300">
-                        {event.event_date && <span>{formatDateTime(event.event_date, event.start_time)}</span>}
-                        {event.event_date && event.location && <span> </span>}
-                        {event.location && <span>{event.location}</span>}
-                      </div>
-                    )}
-
-                    {/* by Organizer */}
-                    {event.community_owner_name && (
-                      <div className="text-sm text-slate-400">by {event.community_owner_name}</div>
-                    )}
-
-                    {/* Rating */}
-                    {event.avg_rating && (
-                      <div className="text-sm text-amber-400">
-                        <svg className="inline w-4 h-4 -mt-0.5 mr-1" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                        </svg>
-                        {event.avg_rating}
-                      </div>
-                    )}
-
-                    {/* Attendees & seats remaining */}
-                    <div className="flex flex-wrap items-center gap-2 mt-1">
-                      {(event.attendee_count ?? 0) > 0 && (
-                        <div className="text-sm text-slate-400">{event.attendee_count} attendees</div>
-                      )}
-                      {event.seats_remaining != null && (
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
-                          event.seats_remaining <= 0
-                            ? 'bg-red-500/15 text-red-400 border-red-500/20'
-                            : event.seats_remaining <= 10
-                              ? 'bg-amber-500/15 text-amber-400 border-amber-500/20'
-                              : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20'
-                        }`}>
-                          {event.seats_remaining <= 0 ? 'Event Full' : `${event.seats_remaining} seat${event.seats_remaining === 1 ? '' : 's'} left`}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* RSVP badge */}
-                    {rsvpStatus[event.id] === 'attending' && (
-                      <div className="mt-2">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                          Going
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                  event={event}
+                  index={i}
+                  savedEvents={savedEvents}
+                  rsvpStatus={rsvpStatus}
+                  onSave={handleSaveEvent}
+                  formatDateTime={formatDateTime}
+                />
               ))}
             </div>
-          ) : (
+          ) : events.length === 0 && relatedEvents.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl">
               <svg className="w-16 h-16 text-slate-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
               <h3 className="text-xl font-semibold text-slate-300">No events found</h3>
               <p className="mt-2 text-slate-500">Try adjusting your search or filters</p>
+            </div>
+          ) : null}
+
+          {/* Related events */}
+          {relatedEvents.length > 0 && (
+            <div className="mt-14 opacity-0 animate-fade-in-up animate-fill-both">
+              <div className="flex items-center gap-3 mb-6">
+                <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-amber-400 to-orange-500" />
+                <div>
+                  <h2 className="text-xl font-bold text-slate-100">Related Events</h2>
+                  <p className="text-sm text-slate-400 mt-0.5">Popular events in similar categories</p>
+                </div>
+              </div>
+              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                {relatedEvents.map((event: any, i: number) => (
+                  <EventCard
+                    key={event.id}
+                    event={event}
+                    index={i}
+                    savedEvents={savedEvents}
+                    rsvpStatus={rsvpStatus}
+                    onSave={handleSaveEvent}
+                    formatDateTime={formatDateTime}
+                  />
+                ))}
+              </div>
             </div>
           )}
 

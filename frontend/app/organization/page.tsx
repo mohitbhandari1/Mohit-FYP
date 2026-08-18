@@ -6,6 +6,7 @@ import Link from 'next/link';
 import Navbar from '../components/Navbar';
 import Chatbot from '../components/Chatbot';
 import ConfirmModal from '../components/ConfirmModal';
+import ImageCropper from '../components/ImageCropper';
 import { useToast } from '../components/Toast';
 import { apiFetch, BACKEND_URL } from '../lib/auth';
 
@@ -573,19 +574,26 @@ export default function OrganizationDashboard() {
                     </div>
 
                     <div className="pt-4 border-t border-white/5">
-                      <h3 className="text-base font-semibold text-slate-200 mb-4">Images (Recommended: 1920 × 1080 px)</h3>
+                      <h3 className="text-base font-semibold text-slate-200 mb-4">Images</h3>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <label className={labelClass}>Banner Image</label>
-                          <input type="file" accept="image/*" onChange={(e) => setBannerFile(e.target.files?.[0] || null)}
-                            className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer" />
-                          <p className="mt-1 text-xs text-slate-500">1920 × 1080 px recommended. {selectedCommunity?.banner_image ? 'Current banner exists.' : ''}</p>
+                          <ImageCropper
+                            aspect={16 / 9}
+                            currentUrl={selectedCommunity?.banner_image ? `${BACKEND_URL}${selectedCommunity.banner_image}` : undefined}
+                            onChange={setBannerFile}
+                          />
+                          <p className="mt-1 text-xs text-slate-500">Drag &amp; drop an image, then drag or zoom to frame it in the 16:9 banner shape.</p>
                         </div>
                         <div>
                           <label className={labelClass}>Logo</label>
-                          <input type="file" accept="image/*" onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
-                            className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer" />
-                          <p className="mt-1 text-xs text-slate-500">1920 × 1080 px recommended. {selectedCommunity?.logo ? 'Current logo exists.' : ''}</p>
+                          <ImageCropper
+                            aspect={1}
+                            currentUrl={selectedCommunity?.logo ? `${BACKEND_URL}${selectedCommunity.logo}` : undefined}
+                            onChange={setLogoFile}
+                            outputMaxWidth={1024}
+                          />
+                          <p className="mt-1 text-xs text-slate-500">Drag &amp; drop an image, then drag or zoom to frame it in the square logo shape.</p>
                         </div>
                       </div>
                     </div>
