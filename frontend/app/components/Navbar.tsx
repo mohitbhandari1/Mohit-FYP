@@ -1,16 +1,27 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '../lib/AuthContext';
-import { BACKEND_URL } from '../lib/auth';
+import { apiFetch, BACKEND_URL } from '../lib/auth';
 
 const navLinks = [
   { href: '/', label: 'Home' },
   { href: '/communities', label: 'Communities' },
   { href: '/events', label: 'Events' },
 ];
+
+interface Notification {
+  id: number;
+  type: string;
+  title: string;
+  message: string;
+  link: string;
+  is_read: boolean;
+  created_at: string;
+  community_logo?: string | null;
+}
 
 export default function Navbar() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -20,22 +31,169 @@ export default function Navbar() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
+  // Notification state
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdowns on outside click (use mouseup to avoid race with onClick)
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDropdownOpen(false);
       }
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotifOpen(false);
+      }
     }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    document.addEventListener('mouseup', handleClick);
+    return () => document.removeEventListener('mouseup', handleClick);
   }, []);
 
   // Close mobile menu on route change
   useEffect(() => {
     setMobileOpen(false);
     setDropdownOpen(false);
+    setNotifOpen(false);
   }, [pathname]);
+
+  // Fetch unread count periodically
+  const fetchUnreadCount = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const res = await apiFetch('/api/notifications/unread-count');
+      if (res.ok) {
+        const data = await res.json();
+        setUnreadCount(data.unread_count);
+      }
+    } catch {
+      // Silent fail
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    fetchUnreadCount();
+    const interval = setInterval(fetchUnreadCount, 30000); // Poll every 30s
+    return () => clearInterval(interval);
+  }, [fetchUnreadCount]);
+
+  // Fetch notifications when bell is clicked
+  const toggleNotifications = async () => {
+    if (notifOpen) {
+      setNotifOpen(false);
+      return;
+    }
+    setNotifOpen(true);
+    setNotifLoading(true);
+    try {
+      const res = await apiFetch('/api/notifications?limit=15');
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data.notifications);
+        setUnreadCount(data.unread_count);
+      }
+    } catch {
+      // Silent fail
+    }
+    setNotifLoading(false);
+  };
+
+  // Mark a notification as read
+  const markAsRead = async (notif: Notification) => {
+    if (!notif.is_read) {
+      try {
+        await apiFetch(`/api/notifications/${notif.id}/read`, { method: 'PATCH' });
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n))
+        );
+        setUnreadCount((prev) => Math.max(prev - 1, 0));
+      } catch {
+        // Silent fail
+      }
+    }
+    // Navigate to the link if present
+    if (notif.link) {
+      setNotifOpen(false);
+      router.push(notif.link);
+    }
+  };
+
+  // Mark all as read
+  const markAllAsRead = async () => {
+    try {
+      await apiFetch('/api/notifications/read-all', { method: 'PATCH' });
+      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      setUnreadCount(0);
+    } catch {
+      // Silent fail
+    }
+  };
+
+  // Delete a notification
+  const deleteNotification = async (e: React.MouseEvent, notifId: number) => {
+    e.stopPropagation();
+    try {
+      await apiFetch(`/api/notifications/${notifId}`, { method: 'DELETE' });
+      setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+    } catch {
+      // Silent fail
+    }
+  };
+
+  // Format relative time
+  const timeAgo = (dateStr: string) => {
+    const now = new Date();
+    const date = new Date(dateStr);
+    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  // Get icon for notification type
+  const getNotifIcon = (type: string) => {
+    switch (type) {
+      case 'new_event':
+        return (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+          </svg>
+        );
+      case 'document_approved':
+      case 'answer_verified':
+        return (
+          <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        );
+      case 'document_rejected':
+      case 'answer_rejected':
+        return (
+          <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+        );
+      case 'announcement':
+        return (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.52-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
+          </svg>
+        );
+      default:
+        return (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+          </svg>
+        );
+    }
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -108,13 +266,103 @@ export default function Navbar() {
                   </Link>
                 )}
 
-                {/* Notifications */}
-                <button className="relative p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all duration-200">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-                  </svg>
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
-                </button>
+                {/* ─── Notification Bell ─── */}
+                <div className="relative" ref={notifRef}>
+                  <button
+                    onClick={toggleNotifications}
+                    className="relative p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all duration-200"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+                    </svg>
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold text-black bg-amber-400 rounded-full">
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Notification Dropdown */}
+                  {notifOpen && (
+                    <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-xl border border-white/10 bg-slate-900/95 backdrop-blur-xl shadow-xl shadow-black/30 animate-scale-in origin-top-right overflow-hidden">
+                      {/* Header */}
+                      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/60">
+                        <h3 className="text-sm font-semibold text-white">Notifications</h3>
+                        {unreadCount > 0 && (
+                          <button
+                            onClick={markAllAsRead}
+                            className="text-xs text-amber-400 hover:text-amber-300 transition-colors"
+                          >
+                            Mark all read
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Notification List */}
+                      <div className="max-h-96 overflow-y-auto">
+                        {notifLoading ? (
+                          <div className="flex items-center justify-center py-8">
+                            <div className="w-6 h-6 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
+                          </div>
+                        ) : (
+                          notifications.map((notif) => (
+                            <div
+                              key={notif.id}
+                              onClick={() => markAsRead(notif)}
+                              className={`flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors border-b border-slate-800/30 last:border-0 ${
+                                notif.is_read
+                                  ? 'hover:bg-white/5'
+                                  : 'bg-amber-500/5 hover:bg-amber-500/10'
+                              }`}
+                            >
+                              {/* Icon or Community Logo */}
+                              <div className="flex-shrink-0 mt-0.5">
+                                {notif.community_logo ? (
+                                  <div className="w-8 h-8 rounded-full overflow-hidden border border-white/10 bg-slate-800/50">
+                                    <img
+                                      src={notif.community_logo.startsWith('http') ? notif.community_logo : `${BACKEND_URL}${notif.community_logo}`}
+                                      alt=""
+                                      className="w-full h-full object-cover"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className={`${notif.is_read ? 'text-slate-500' : 'text-amber-400'}`}>
+                                    {getNotifIcon(notif.type)}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Content */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className={`text-sm font-medium truncate ${notif.is_read ? 'text-slate-300' : 'text-white'}`}>
+                                    {notif.title}
+                                  </p>
+                                  {!notif.is_read && (
+                                    <span className="flex-shrink-0 w-2 h-2 bg-amber-400 rounded-full" />
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{notif.message}</p>
+                                <p className="text-[11px] text-slate-500 mt-1">{timeAgo(notif.created_at)}</p>
+                              </div>
+
+                              {/* Delete button */}
+                              <button
+                                onClick={(e) => deleteNotification(e, notif.id)}
+                                className="flex-shrink-0 p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
+                                style={{ opacity: 1 }}
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {/* User dropdown */}
                 <div className="relative" ref={dropdownRef}>
@@ -157,14 +405,9 @@ export default function Navbar() {
                             </div>
                             <DropdownLink href="/organization" icon="briefcase">Organization Dashboard</DropdownLink>
                             <DropdownLink href="/organizer" icon="briefcase">Organizer</DropdownLink>
-                            <div className="border-t border-slate-800/60 my-1" />
                           </>
                         )}
-                        {user.is_admin && (
-                          <DropdownLink href="/admin" icon="shield">Admin Panel</DropdownLink>
-                        )}
-                      </div>
-                      <div className="border-t border-slate-800/60 py-1">
+                        <div className="my-1 border-t border-slate-800/60" />
                         <button
                           onClick={handleLogout}
                           className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
@@ -172,7 +415,7 @@ export default function Navbar() {
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                           </svg>
-                          Logout
+                          Sign Out
                         </button>
                       </div>
                     </div>
@@ -180,26 +423,20 @@ export default function Navbar() {
                 </div>
               </>
             ) : (
-              <div className="hidden sm:flex items-center gap-2">
-                <Link
-                  href="/login"
-                  className="px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-white/5 transition-all duration-200"
-                >
-                  Login
+              <div className="flex items-center gap-2">
+                <Link href="/login" className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white transition-colors">
+                  Sign In
                 </Link>
-                <Link
-                  href="/register"
-                  className="px-4 py-2 rounded-lg text-sm font-medium bg-gradient-to-r from-amber-500 to-orange-500 text-black shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 hover:scale-105 transition-all duration-200"
-                >
-                  Register
+                <Link href="/register" className="btn-primary px-4 py-2 rounded-lg text-sm font-semibold">
+                  Get Started
                 </Link>
               </div>
             )}
 
-            {/* Mobile hamburger */}
+            {/* Mobile menu button */}
             <button
               onClick={() => setMobileOpen(!mobileOpen)}
-              className="md:hidden p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+              className="md:hidden p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 {mobileOpen ? (
@@ -211,79 +448,56 @@ export default function Navbar() {
             </button>
           </div>
         </div>
-      </nav>
 
-      {/* Mobile slide-in menu */}
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileOpen(false)} />
-          <div className="absolute top-16 right-0 w-72 h-[calc(100vh-4rem)] bg-slate-950/95 backdrop-blur-xl border-l border-slate-800/60 animate-slide-in-right overflow-y-auto">
-            <div className="p-4 space-y-2">
-              {navLinks.map((link) => {
-                const isActive = pathname === link.href || (link.href !== '/' && pathname.startsWith(link.href));
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={`block px-4 py-3 rounded-xl text-sm font-medium transition-all ${
-                      isActive
-                        ? 'text-amber-400 bg-amber-500/10 border border-amber-500/20'
-                        : 'text-slate-300 hover:text-white hover:bg-white/5'
-                    }`}
-                  >
-                    {link.label}
-                  </Link>
-                );
-              })}
-
-              {!isAuthenticated && (
-                <div className="pt-4 border-t border-slate-800/60 space-y-2">
-                  <Link href="/login" className="block px-4 py-3 rounded-xl text-sm font-medium text-slate-300 hover:text-white hover:bg-white/5 transition-all">
-                    Login
-                  </Link>
-                  <Link href="/register" className="block px-4 py-3 rounded-xl text-sm font-medium text-center bg-gradient-to-r from-amber-500 to-orange-500 text-black">
-                    Register
-                  </Link>
-                </div>
-              )}
-
-              {isAuthenticated && user && (
-                <div className="pt-4 border-t border-slate-800/60 space-y-2">
-                  <Link href="/profile" className="block px-4 py-3 rounded-xl text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-all">Profile</Link>
-                  <Link href="/my-communities" className="block px-4 py-3 rounded-xl text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-all">My Communities</Link>
-                  <Link href="/my-events" className="block px-4 py-3 rounded-xl text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-all">My Events</Link>
-                  {user.owns_community && (
-                    <>
-                      <Link href="/organization" className="block px-4 py-3 rounded-xl text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-all">Organization Dashboard</Link>
-                      <Link href="/organizer" className="block px-4 py-3 rounded-xl text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-all">Organizer</Link>
-                    </>
-                  )}
-                  {user.is_admin && (
-                    <Link href="/admin" className="block px-4 py-3 rounded-xl text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-all">Admin Panel</Link>
-                  )}
-                  <button onClick={handleLogout} className="w-full text-left px-4 py-3 rounded-xl text-sm text-red-400 hover:bg-red-500/10 transition-all">
-                    Logout
-                  </button>
-                </div>
-              )}
+        {/* Mobile menu */}
+        {mobileOpen && (
+          <div className="md:hidden border-t border-slate-800/60 bg-slate-950/95 backdrop-blur-xl">
+            <div className="px-4 py-3 space-y-1">
+              {navLinks.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    pathname === link.href
+                      ? 'text-amber-400 bg-amber-500/10'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  {link.label}
+                </Link>
+              ))}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Spacer for fixed navbar */}
+        )}
+      </nav>
       <div className="h-16" />
     </>
   );
 }
 
+// ─── Dropdown Link Component ───
 function DropdownLink({ href, icon, children }: { href: string; icon: string; children: React.ReactNode }) {
   const icons: Record<string, JSX.Element> = {
-    user: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />,
-    users: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />,
-    calendar: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />,
-    briefcase: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />,
-    shield: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />,
+    user: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+      </svg>
+    ),
+    users: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+      </svg>
+    ),
+    calendar: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+      </svg>
+    ),
+    briefcase: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+      </svg>
+    ),
   };
 
   return (
@@ -291,9 +505,7 @@ function DropdownLink({ href, icon, children }: { href: string; icon: string; ch
       href={href}
       className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors"
     >
-      <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        {icons[icon]}
-      </svg>
+      {icons[icon] || icons.user}
       {children}
     </Link>
   );
