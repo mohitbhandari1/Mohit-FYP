@@ -7,6 +7,9 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import {
   sendEmail,
   rsvpConfirmationEmail,
+  rsvpPendingApprovalEmail,
+  rsvpApprovedEmail,
+  rsvpRejectedEmail,
   rsvpDocumentPendingEmail,
   rsvpDocumentApprovedEmail,
   rsvpDocumentRejectedEmail,
@@ -93,7 +96,7 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
   try {
     // Check if event exists (include seat capacity + document requirement)
     const eventCheck = await query(
-      'SELECT id, community_id, title, max_attendees, attendee_count, requires_documents FROM events WHERE id = $1 AND deleted_at IS NULL',
+      'SELECT id, community_id, title, max_attendees, attendee_count, requires_documents, require_approval FROM events WHERE id = $1 AND deleted_at IS NULL',
       [event_id]
     );
     if (eventCheck.rows.length === 0) {
@@ -179,8 +182,11 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
       documentName = files['document'][0].originalname;
     }
 
+    // ─── When require_approval is on, RSVP goes to 'pending' (no seat claimed yet) ───
+    const effectiveStatus = (event.require_approval && rsvpStatus === 'attending') ? 'pending' : rsvpStatus;
+
     // ─── Seat limit / capacity check (atomic — prevents oversubscription) ───
-    if (rsvpStatus === 'attending' && prevStatus !== 'attending') {
+    if (effectiveStatus === 'attending' && prevStatus !== 'attending') {
       const claim = await query(
         `UPDATE events SET attendee_count = attendee_count + 1
          WHERE id = $1 AND (max_attendees IS NULL OR attendee_count < max_attendees)`,
@@ -218,7 +224,7 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
          answers = CASE WHEN $7::jsonb IS NULL THEN rsvps.answers ELSE $7::jsonb END,
          document_url = COALESCE($8, rsvps.document_url), document_name = COALESCE($9, rsvps.document_name)
        RETURNING id, user_id, event_id, status`,
-      [req.userId, event_id, rsvpStatus, full_name || null, phone || null, email || null, answersJson,
+      [req.userId, event_id, effectiveStatus, full_name || null, phone || null, email || null, answersJson,
        documentUrl, documentName]
     );
 
@@ -257,7 +263,7 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
     );
 
     // ─── Send RSVP email notifications ───
-    if (newStatus === 'attending' && prevStatus !== 'attending') {
+    if (newStatus !== prevStatus) {
       const userName = user.rows[0]?.name || 'User';
       const userEmail = req.body.email || '';
       const eventTitle = eventCheck.rows[0].title;
@@ -284,18 +290,34 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
       }
 
       if (recipientEmail) {
-        if (event.requires_documents) {
-          // Event requires documents — send "document pending" email
-          const emailContent = rsvpDocumentPendingEmail(userName, eventTitle, communityName);
+        if (newStatus === 'pending') {
+          // Approval required — send "application under review" email
+          const emailContent = rsvpPendingApprovalEmail(userName, eventTitle, communityName);
           sendEmail(recipientEmail, emailContent.subject, emailContent.html).catch((err) =>
-            console.error('Failed to send document pending email:', err)
+            console.error('Failed to send RSVP pending approval email:', err)
           );
-        } else {
-          // No documents required — send direct confirmation email
-          const emailContent = rsvpConfirmationEmail(userName, eventTitle, eventDate, eventLocation, communityName);
-          sendEmail(recipientEmail, emailContent.subject, emailContent.html).catch((err) =>
-            console.error('Failed to send RSVP confirmation email:', err)
-          );
+          // In-app notification
+          if (req.userId) createNotification(
+            req.userId, 'rsvp_pending',
+            `Application Submitted: ${eventTitle}`,
+            `Your registration for ${eventTitle} is under review by the organizer.`,
+            `/events/${event_id}`,
+            communityDetails.rows[0]?.logo || null
+          ).catch(() => {});
+        } else if (newStatus === 'attending' && prevStatus !== 'attending') {
+          if (event.requires_documents) {
+            // Event requires documents — send "document pending" email
+            const emailContent = rsvpDocumentPendingEmail(userName, eventTitle, communityName);
+            sendEmail(recipientEmail, emailContent.subject, emailContent.html).catch((err) =>
+              console.error('Failed to send document pending email:', err)
+            );
+          } else {
+            // No documents required — send direct confirmation email
+            const emailContent = rsvpConfirmationEmail(userName, eventTitle, eventDate, eventLocation, communityName);
+            sendEmail(recipientEmail, emailContent.subject, emailContent.html).catch((err) =>
+              console.error('Failed to send RSVP confirmation email:', err)
+            );
+          }
         }
       }
     }
@@ -339,6 +361,123 @@ router.delete('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
     }
 
     res.json({ message: 'RSVP cancelled' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PATCH /api/engagement/rsvp/approve-reject - Approve or reject a pending RSVP (organizer/admin only)
+router.patch('/rsvp/approve-reject', authMiddleware, async (req: AuthRequest, res, next) => {
+  const { event_id, user_id, action } = req.body; // action: 'approve' | 'reject'
+  if (!event_id || !user_id || !action) {
+    return res.status(400).json({ error: 'event_id, user_id, and action (approve/reject) are required' });
+  }
+  if (!['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ error: 'action must be "approve" or "reject"' });
+  }
+
+  try {
+    // Only the community owner (organizer) or an admin can approve/reject RSVPs
+    const eventCheck = await query(
+      `SELECT e.id, e.title, e.event_date, e.location, e.max_attendees, e.attendee_count, e.require_approval, c.owner_id, c.name AS community_name, c.logo AS community_logo
+       FROM events e JOIN communities c ON e.community_id = c.id
+       WHERE e.id = $1 AND e.deleted_at IS NULL AND c.deleted_at IS NULL`,
+      [event_id]
+    );
+    if (eventCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    if (eventCheck.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Not authorized to approve/reject RSVPs' });
+    }
+
+    const event = eventCheck.rows[0];
+
+    // Check the current RSVP
+    const rsvpCheck = await query(
+      'SELECT id, status, full_name FROM rsvps WHERE event_id = $1 AND user_id = $2',
+      [event_id, user_id]
+    );
+    if (rsvpCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'RSVP not found' });
+    }
+    if (rsvpCheck.rows[0].status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending RSVPs can be approved or rejected' });
+    }
+
+    const newStatus = action === 'approve' ? 'attending' : 'rejected';
+
+    if (action === 'approve') {
+      // Check seat capacity before approving
+      if (event.max_attendees != null && event.attendee_count >= event.max_attendees) {
+        return res.status(400).json({ error: 'Cannot approve — event is full' });
+      }
+      // Claim a seat
+      await query(
+        'UPDATE events SET attendee_count = attendee_count + 1 WHERE id = $1',
+        [event_id]
+      );
+    }
+
+    // Update RSVP status
+    await query(
+      'UPDATE rsvps SET status = $1 WHERE event_id = $2 AND user_id = $3',
+      [newStatus, event_id, user_id]
+    );
+
+    // Log activity
+    const [adminUser] = await Promise.all([
+      query('SELECT name FROM users WHERE id = $1', [req.userId]),
+    ]);
+    await query(
+      'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
+      [req.userId, adminUser.rows[0]?.name || '', `rsvp_${action}d`, `${action === 'approve' ? 'Approved' : 'Rejected'} RSVP for ${event.title}`]
+    );
+
+    // ─── Send email + in-app notification to the attendee ───
+    const [userRes] = await Promise.all([
+      query('SELECT name, email FROM users WHERE id = $1', [user_id]),
+    ]);
+    const userName = userRes.rows[0]?.name || 'User';
+    const userEmail = userRes.rows[0]?.email || '';
+    const eventTitle = event.title;
+    const communityName = event.community_name;
+    const eventDate = event.event_date
+      ? new Date(event.event_date).toLocaleDateString('en-US', {
+          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+        })
+      : 'TBA';
+    const eventLocation = event.location || 'TBA';
+
+    if (userEmail) {
+      if (action === 'approve') {
+        const emailContent = rsvpApprovedEmail(userName, eventTitle, eventDate, eventLocation, communityName);
+        sendEmail(userEmail, emailContent.subject, emailContent.html).catch((err) =>
+          console.error('Failed to send RSVP approved email:', err)
+        );
+        createNotification(
+          user_id, 'rsvp_approved',
+          `Registration Confirmed: ${eventTitle}`,
+          `Your registration for ${eventTitle} has been approved. Welcome!`,
+          `/events/${event_id}`,
+          event.community_logo || null
+        ).catch(() => {});
+      } else {
+        const emailContent = rsvpRejectedEmail(userName, eventTitle, communityName);
+        sendEmail(userEmail, emailContent.subject, emailContent.html).catch((err) =>
+          console.error('Failed to send RSVP rejected email:', err)
+        );
+        createNotification(
+          user_id, 'rsvp_rejected',
+          `Registration Update: ${eventTitle}`,
+          `Your registration for ${eventTitle} was not approved at this time.`,
+          `/events/${event_id}`,
+          event.community_logo || null
+        ).catch(() => {});
+      }
+    }
+
+    res.json({ status: newStatus, message: `RSVP ${action === 'approve' ? 'approved' : 'rejected'} successfully` });
   } catch (error) {
     next(error);
   }

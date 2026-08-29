@@ -183,10 +183,16 @@ export default function EventDetailPage() {
       if (res.ok) {
         // Only adjust counters when the status actually changed
         // (re-clicking the same status is a no-op on the backend)
-        const statusChanged = rsvpStatus !== status;
-        setRsvpStatus(status);
+        const returnedStatus = data?.status || status;
+        const statusChanged = rsvpStatus !== returnedStatus;
+        setRsvpStatus(returnedStatus);
         if (statusChanged) {
-          setAttendeeCount((prev) => status === 'attending' ? prev + 1 : Math.max(0, prev - 1));
+          // Only increment attendee count if directly attending (not pending)
+          if (returnedStatus === 'attending' && rsvpStatus !== 'attending') {
+            setAttendeeCount((prev) => prev + 1);
+          } else if (returnedStatus !== 'attending' && rsvpStatus === 'attending') {
+            setAttendeeCount((prev) => Math.max(0, prev - 1));
+          }
           if (status === 'attending' && seatsLeft != null) setSeatsLeft((prev) => prev == null ? null : Math.max(0, prev - 1));
         }
         setShowRsvpQuestions(false);
@@ -197,6 +203,31 @@ export default function EventDetailPage() {
       }
     } catch (err) { setRsvpError('Failed to RSVP. Please try again.'); }
     finally { setSubmittingRsvp(false); }
+  };
+
+  const handleRsvpApproval = async (userId: number, action: 'approve' | 'reject') => {
+    setAttendeesError('');
+    try {
+      const res = await apiFetch('/api/engagement/rsvp/approve-reject', {
+        method: 'PATCH',
+        body: JSON.stringify({ event_id: parseInt(id), user_id: userId, action }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Update the attendee's status in the list
+        setAttendees((prev) => prev.map((a: any) =>
+          a.user_id === userId ? { ...a, status: data.status } : a
+        ));
+        // Update attendee count if approved
+        if (action === 'approve') {
+          setAttendeeCount((prev) => prev + 1);
+          if (seatsLeft != null) setSeatsLeft((prev) => prev == null ? null : Math.max(0, prev - 1));
+        }
+      } else {
+        const data = await res.json().catch(() => null);
+        setAttendeesError(data?.error || 'Failed to update RSVP status');
+      }
+    } catch { setAttendeesError('Failed to update RSVP status'); }
   };
 
   const handleAnswerStatus = async (userId: number, questionId: number, status: 'verified' | 'rejected' | '') => {
@@ -429,6 +460,14 @@ export default function EventDetailPage() {
                     </p>
                   </div>
                 )}
+                {event.require_approval && (
+                  <div className="mt-4 pt-4 border-t border-white/5">
+                    <h3 className="text-md font-semibold text-slate-200 mb-2">📋 Approval Required</h3>
+                    <p className="text-slate-400 whitespace-pre-wrap">
+                      Registrations require organizer approval before confirmation. You&apos;ll receive an email once your spot is confirmed.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Who's Coming — organizer only */}
@@ -473,7 +512,7 @@ export default function EventDetailPage() {
                               </div>
                             </div>
                             <span className="flex-shrink-0 flex items-center gap-2">
-                              {((event.questions?.length > 0 && att.answers) || att.document_url) && (
+                              {((event.questions?.length > 0 && att.answers) || att.document_url) && att.status !== 'pending' && (
                                 <button
                                   onClick={() => setReviewUserId(att.user_id || att.id)}
                                   className="text-[10px] px-2.5 py-1 rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-400 font-medium hover:bg-amber-500/20 transition-all"
@@ -481,13 +520,30 @@ export default function EventDetailPage() {
                                   Review
                                 </button>
                               )}
-                              <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                                att.status === 'attending'
-                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                  : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                              }`}>
-                                {att.status === 'attending' ? 'Attending' : 'Not attending'}
-                              </span>
+                              {att.status === 'pending' ? (
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    onClick={() => handleRsvpApproval(att.user_id, 'approve')}
+                                    className="text-[10px] px-2.5 py-1 rounded-lg border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 font-medium hover:bg-emerald-500/25 transition-all"
+                                  >
+                                    ✓ Approve
+                                  </button>
+                                  <button
+                                    onClick={() => handleRsvpApproval(att.user_id, 'reject')}
+                                    className="text-[10px] px-2.5 py-1 rounded-lg border border-red-500/40 bg-red-500/15 text-red-300 font-medium hover:bg-red-500/25 transition-all"
+                                  >
+                                    ✗ Reject
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                                  att.status === 'attending'
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                    : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                }`}>
+                                  {att.status === 'attending' ? 'Attending' : att.status === 'rejected' ? 'Rejected' : 'Not attending'}
+                                </span>
+                              )}
                             </span>
                           </div>
                           {att.phone && <p className="text-xs text-slate-500 mt-1 ml-11">📞 {att.phone}</p>}                              {event.questions?.length > 0 && att.answers && (
@@ -775,28 +831,55 @@ export default function EventDetailPage() {
                 )}
 
                 <div className="space-y-3">
-                  <button
-                    onClick={() => handleRsvp('attending')}
-                    className={`w-full px-4 py-3 rounded-xl font-medium text-sm transition-all ${
-                      rsvpStatus === 'attending'
-                        ? 'bg-emerald-500/20 text-emerald-400 border-2 border-emerald-500/40 shadow-lg shadow-emerald-500/10'
-                        : isFull
-                          ? 'bg-white/5 text-slate-400 border border-red-500/30 hover:bg-red-500/10 hover:text-red-300'
-                          : 'bg-white/5 text-slate-300 border border-white/10 hover:bg-emerald-500/10 hover:text-emerald-400 hover:border-emerald-500/20'
-                    }`}
-                  >
-                    {isFull ? '✕ Seats Full' : "✓ I'm Attending"}
-                  </button>
-                  <button
-                    onClick={() => handleRsvp('not_attending')}
-                    className={`w-full px-4 py-3 rounded-xl font-medium text-sm transition-all ${
-                      rsvpStatus === 'not_attending'
-                        ? 'bg-red-500/20 text-red-400 border-2 border-red-500/40 shadow-lg shadow-red-500/10'
-                        : 'bg-white/5 text-slate-300 border border-white/10 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20'
-                    }`}
-                  >
-                    ✗ Not Attending
-                  </button>
+                  {rsvpStatus === 'pending' ? (
+                    /* Pending approval state */
+                    <div className="w-full px-4 py-3 rounded-xl font-medium text-sm text-center bg-amber-500/10 text-amber-400 border-2 border-amber-500/30">
+                      <div className="flex items-center justify-center gap-2">
+                        <svg className="w-4 h-4 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>⏳ Pending Approval</span>
+                      </div>
+                      <p className="text-xs text-amber-300/70 mt-1">Your registration is under review</p>
+                    </div>
+                  ) : rsvpStatus === 'rejected' ? (
+                    /* Rejected state */
+                    <div className="w-full px-4 py-3 rounded-xl font-medium text-sm text-center bg-red-500/10 text-red-400 border-2 border-red-500/30">
+                      <div className="flex items-center justify-center gap-2">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>✕ Registration Not Approved</span>
+                      </div>
+                      <p className="text-xs text-red-300/70 mt-1">Contact the organizer for details</p>
+                    </div>
+                  ) : (
+                    /* Normal RSVP buttons */
+                    <>
+                      <button
+                        onClick={() => handleRsvp('attending')}
+                        className={`w-full px-4 py-3 rounded-xl font-medium text-sm transition-all ${
+                          rsvpStatus === 'attending'
+                            ? 'bg-emerald-500/20 text-emerald-400 border-2 border-emerald-500/40 shadow-lg shadow-emerald-500/10'
+                            : isFull
+                              ? 'bg-white/5 text-slate-400 border border-red-500/30 hover:bg-red-500/10 hover:text-red-300'
+                              : 'bg-white/5 text-slate-300 border border-white/10 hover:bg-emerald-500/10 hover:text-emerald-400 hover:border-emerald-500/20'
+                        }`}
+                      >
+                        {isFull ? '✕ Seats Full' : event?.require_approval ? '📋 Request to Join' : "✓ I'm Attending"}
+                      </button>
+                      <button
+                        onClick={() => handleRsvp('not_attending')}
+                        className={`w-full px-4 py-3 rounded-xl font-medium text-sm transition-all ${
+                          rsvpStatus === 'not_attending'
+                            ? 'bg-red-500/20 text-red-400 border-2 border-red-500/40 shadow-lg shadow-red-500/10'
+                            : 'bg-white/5 text-slate-300 border border-white/10 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20'
+                        }`}
+                      >
+                        ✗ Not Attending
+                      </button>
+                    </>
+                  )}
                 </div>
 
                 {/* Actions */}
@@ -1028,7 +1111,7 @@ export default function EventDetailPage() {
                   disabled={submittingRsvp}
                   className="flex-1 px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-semibold shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 transition-all disabled:opacity-50"
                 >
-                  {submittingRsvp ? 'Confirming...' : 'Confirm Attendance'}
+                  {submittingRsvp ? 'Submitting...' : event?.require_approval ? 'Request to Join' : 'Confirm Attendance'}
                 </button>
                 <button
                   onClick={() => setShowRsvpQuestions(false)}

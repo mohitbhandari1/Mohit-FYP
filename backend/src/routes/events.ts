@@ -126,7 +126,7 @@ router.get('/', async (req, res, next) => {
               e.location, e.event_type, e.community_id, e.attendee_count, e.max_attendees,
               ${SEATS_REMAINING},
               e.banner_image, e.topics, e.payment_type, e.duration,
-              e.age_limit, e.requires_documents, e.document_instructions,
+              e.age_limit, e.requires_documents, e.document_instructions, e.require_approval,
               c.name as community_name, c.owner_id, c.logo as community_logo,
               u.name as community_owner_name,
               (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE event_id = e.id) as avg_rating
@@ -203,7 +203,7 @@ router.get('/', async (req, res, next) => {
                 e.location, e.event_type, e.community_id, e.attendee_count, e.max_attendees,
                 ${SEATS_REMAINING},
                 e.banner_image, e.topics, e.payment_type, e.duration,
-                e.age_limit, e.requires_documents, e.document_instructions,
+                e.age_limit, e.requires_documents, e.document_instructions, e.require_approval,
                 c.name as community_name, c.owner_id, c.logo as community_logo,
                 u.name as community_owner_name,
                 (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE event_id = e.id) as avg_rating
@@ -239,7 +239,7 @@ router.get('/upcoming', async (req, res, next) => {
               e.event_type, e.community_id, e.attendee_count, e.max_attendees,
               ${SEATS_REMAINING},
               e.banner_image, e.topics, e.payment_type,
-              e.age_limit, e.requires_documents, e.document_instructions,
+              e.age_limit, e.requires_documents, e.document_instructions, e.require_approval,
               c.name as community_name, c.logo as community_logo,
               u.name as community_owner_name,
               (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE event_id = e.id) as avg_rating
@@ -287,7 +287,7 @@ router.get('/organizer', authMiddleware, async (req: AuthRequest, res, next) => 
               e.location, e.event_type, e.community_id, e.attendee_count, e.max_attendees,
               ${SEATS_REMAINING},
               e.banner_image, e.topics, e.payment_type,
-              e.age_limit, e.requires_documents, e.document_instructions,
+              e.age_limit, e.requires_documents, e.document_instructions, e.require_approval,
               c.name as community_name
        FROM events e
        JOIN communities c ON e.community_id = c.id
@@ -341,7 +341,7 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
     duration, location, event_type, max_attendees, allow_guests,
     guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
     agenda, requirements, instructions, questions,
-    age_limit, requires_documents, document_instructions
+    age_limit, requires_documents, document_instructions, require_approval
   } = req.body;
 
   if (!community_id || !title || !description || !event_date) {
@@ -369,15 +369,16 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
         duration, location, event_type, banner_image, max_attendees, allow_guests,
         guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
         agenda, requirements, instructions,
-        age_limit, requires_documents, document_instructions, attendee_count)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 0)
+        age_limit, requires_documents, document_instructions, require_approval, attendee_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, 0)
        RETURNING *`,
       [community_id, title, description, event_date, start_time || null, end_date || null, end_time || null,
        duration || null, location || null, event_type || 'physical', bannerImage,
        max_attendees || null, allow_guests || false, guest_limit || null,
        rsvp_deadline || null, payment_type || 'free', topics || null, hosts || null, speakers || null,
        agenda || null, requirements || null, instructions || null,
-       age_limit || null, requires_documents === 'true' || requires_documents === true, document_instructions || null]
+       age_limit || null, requires_documents === 'true' || requires_documents === true,
+       document_instructions || null, require_approval === 'true' || require_approval === true, 0]
     );
 
     // Save custom registration questions (seat limit lives in max_attendees)
@@ -437,7 +438,7 @@ router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), asyn
     duration, location, event_type, max_attendees, allow_guests,
     guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
     agenda, requirements, instructions, questions,
-    age_limit, requires_documents, document_instructions
+    age_limit, requires_documents, document_instructions, require_approval
   } = req.body;
 
   try {
@@ -480,7 +481,8 @@ router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), asyn
         instructions = COALESCE($21, instructions),
         age_limit = CASE WHEN $22 = '' THEN NULL ELSE COALESCE($22, age_limit) END,
         requires_documents = CASE WHEN $23 = '' THEN NULL ELSE COALESCE($23::boolean, requires_documents) END,
-        document_instructions = CASE WHEN $24 = '' THEN NULL ELSE COALESCE($24, document_instructions) END
+        document_instructions = CASE WHEN $24 = '' THEN NULL ELSE COALESCE($24, document_instructions) END,
+        require_approval = CASE WHEN $26 = '' THEN NULL ELSE COALESCE($26::boolean, require_approval) END
        WHERE id = $25 RETURNING *`,
       [title || null, description || null, event_date || null, start_time || null,
        end_date || null, end_time || null, duration || null, location || null,
@@ -488,7 +490,7 @@ router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), asyn
        guest_limit || null, rsvp_deadline || null, payment_type || null, topics || null,
        hosts || null, speakers || null, agenda || null, requirements || null, instructions || null,
        age_limit || null, requires_documents ?? null, document_instructions || null,
-       eventId]
+       eventId, require_approval ?? null]
     );
 
     // Save custom registration questions — only when the organizer sent them

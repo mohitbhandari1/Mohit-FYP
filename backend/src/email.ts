@@ -587,3 +587,100 @@ export function membershipSubmittedEmail(
     `,
   };
 }
+
+// ─── RSVP Approval Workflow Email Templates ───
+
+export function rsvpPendingApprovalEmail(
+  name: string,
+  eventTitle: string,
+  communityName: string
+): { subject: string; html: string } {
+  return {
+    subject: `Registration Under Review: ${eventTitle} 📋`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+        <h1 style="color: #f59e0b; font-size: 24px; margin-bottom: 10px;">Registration Under Review 📋</h1>
+        <p style="font-size: 16px; line-height: 1.6;">Hi <strong>${name}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6;">
+          Thank you for registering for <strong>${eventTitle}</strong>! Your application has been received and is currently under review by the event organizer.
+        </p>
+        <div style="background: #1e293b; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b;">
+          <p style="font-size: 15px; margin: 0 0 8px 0;"><strong>Status:</strong> <span style="color: #f59e0b;">⏳ Pending Approval</span></p>
+          <p style="font-size: 14px; margin: 0; color: #94a3b8;">
+            The organizer of <strong>${communityName}</strong> will review your registration shortly. You'll receive an email once your spot is confirmed or if additional information is needed.
+          </p>
+        </div>
+        <p style="font-size: 14px; color: #64748b; text-align: center;">
+          You can also check the status on the event page.
+        </p>
+        <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
+        <p style="font-size: 13px; color: #64748b; text-align: center;">Smart Connects - Community & Event Discovery Platform</p>
+      </div>
+    `,
+  };
+}
+
+export function rsvpApprovedEmail(
+  name: string,
+  eventTitle: string,
+  eventDate: string,
+  eventLocation: string,
+  communityName: string
+): { subject: string; html: string } {
+  return {
+    subject: `Welcome to ${eventTitle}! Your Registration is Confirmed 🎉`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+        <h1 style="color: #22c55e; font-size: 24px; margin-bottom: 10px;">Registration Confirmed! 🎉</h1>
+        <p style="font-size: 16px; line-height: 1.6;">Hi <strong>${name}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6;">
+          Great news! Your registration for <strong>${eventTitle}</strong> has been approved. Welcome to the event!
+        </p>
+        <div style="background: #1e293b; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #22c55e;">
+          <p style="font-size: 15px; margin: 8px 0;"><strong>📅 Date:</strong> ${eventDate}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>📍 Location:</strong> ${eventLocation || 'TBA'}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>🏢 Community:</strong> ${communityName}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>✅ Status:</strong> <span style="color: #22c55e;">Approved & Confirmed</span></p>
+        </div>
+        <p style="font-size: 14px; color: #94a3b8; text-align: center;">
+          We look forward to seeing you there! Don't forget to add this event to your calendar.
+        </p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${FRONTEND_URL}" style="display: inline-block; background: #22c55e; color: #0f172a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;">View Event</a>
+        </div>
+        <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
+        <p style="font-size: 13px; color: #64748b; text-align: center;">Smart Connects - Community & Event Discovery Platform</p>
+      </div>
+    `,
+  };
+}
+
+export function rsvpRejectedEmail(
+  name: string,
+  eventTitle: string,
+  communityName: string
+): { subject: string; html: string } {
+  return {
+    subject: `Registration Update: ${eventTitle}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+        <h1 style="color: #f87171; font-size: 24px; margin-bottom: 10px;">Registration Update</h1>
+        <p style="font-size: 16px; line-height: 1.6;">Hi <strong>${name}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6;">
+          After reviewing your registration for <strong>${eventTitle}</strong>, the organizer was unable to approve your spot at this time.
+        </p>
+        <div style="background: #1e293b; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f87171;">
+          <p style="font-size: 15px; margin: 0 0 8px 0;"><strong>Status:</strong> <span style="color: #f87171;">Not Approved</span></p>
+          <p style="font-size: 14px; margin: 0; color: #94a3b8;">
+            This may be due to limited capacity or specific event requirements. You can contact the organizer of <strong>${communityName}</strong> for more details.
+          </p>
+        </div>
+        <p style="font-size: 14px; color: #94a3b8; text-align: center;">
+          Don't worry — there are always more events to discover on Smart Connects!
+        </p>
+        <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
+        <p style="font-size: 13px; color: #64748b; text-align: center;">Smart Connects - Community & Event Discovery Platform</p>
+      </div>
+    `,
+  };
+}

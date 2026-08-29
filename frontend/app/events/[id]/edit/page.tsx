@@ -48,6 +48,7 @@ export default function EditEventPage() {
     hosts: [{ name: '', role: '' }],
     speakers: '', agenda: '', requirements: '', instructions: '',
     age_limit: '',
+    require_approval: false,
     questions: [
       {
         question: '', type: 'text', required: false,
@@ -107,6 +108,7 @@ export default function EditEventPage() {
           requirements: data.requirements || '',
           instructions: data.instructions || '',
           age_limit: data.age_limit || '',
+          require_approval: data.require_approval || false,
           questions: Array.isArray(data.questions) && data.questions.length > 0
             ? data.questions.map((q: any) => ({
                 question: q.question || '',
@@ -196,6 +198,7 @@ export default function EditEventPage() {
       if (formData.hosts.length > 0 && formData.hosts[0].name) payload.append('hosts', JSON.stringify(formData.hosts));
       if (bannerFile) payload.append('banner_image', bannerFile);
       if (formData.age_limit) payload.append('age_limit', formData.age_limit);
+      payload.append('require_approval', formData.require_approval ? 'true' : 'false');
 
       // Custom registration questions
       const needsOptions = ['select', 'checkboxes', 'radio'];
@@ -394,6 +397,27 @@ export default function EditEventPage() {
                 <p className="mt-1 text-xs text-slate-500">
                   Enter age range or leave blank. Examples: 12-18, 18+, Under 18, All Ages.
                 </p>
+              </div>
+
+              {/* Attendee Approval Toggle */}
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium text-slate-200">Require Approval</label>
+                    <p className="text-xs text-slate-500 mt-0.5">When enabled, attendees must be approved by you before their registration is confirmed.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFormData((prev) => ({ ...prev, require_approval: !prev.require_approval }))}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      formData.require_approval ? 'bg-amber-500' : 'bg-slate-700'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      formData.require_approval ? 'translate-x-6' : 'translate-x-1'
+                    }`} />
+                  </button>
+                </div>
               </div>
 
               {/* Custom Registration Questions — Google Forms style */}
