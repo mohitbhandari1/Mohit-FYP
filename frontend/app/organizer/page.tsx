@@ -33,7 +33,7 @@ export default function OrganizerDashboard() {
   const [formData, setFormData] = useState({
     name: '', description: '', category: '', website: '', location: '',
     facebook: '', instagram: '', linkedin: '', tiktok: '',
-    is_private: false, member_approval: false,
+    is_private: false, member_approval: false, membership_open: false, membership_form_url: '',
   });
   const [saving, setSaving] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState('');
@@ -120,6 +120,8 @@ export default function OrganizerDashboard() {
       tiktok: selectedCommunity.tiktok || '',
       is_private: selectedCommunity.is_private || false,
       member_approval: selectedCommunity.member_approval || false,
+      membership_open: selectedCommunity.membership_open || false,
+      membership_form_url: selectedCommunity.membership_form_url || '',
     });
 
     const fetchMembersAndEvents = async () => {
@@ -662,6 +664,28 @@ export default function OrganizerDashboard() {
                                 className="w-4 h-4 rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/20" />
                               <span className="text-sm text-slate-300">Require approval for new members</span>
                             </label>
+                          </div>
+                        </div>
+
+                        <div className="pt-4 border-t border-white/5">
+                          <h3 className="text-base font-semibold text-slate-200 mb-4">Membership</h3>
+                          <label className="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" name="membership_open" checked={formData.membership_open} onChange={handleSettingsChange}
+                              className="w-4 h-4 rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/20" />
+                            <span className="text-sm text-slate-300">Open membership applications</span>
+                          </label>
+                          <p className="text-xs text-slate-500 mt-2 ml-7">When enabled, users can apply to become official members of your organization.</p>
+                          <div className="mt-4 ml-7">
+                            <label className="block text-sm text-slate-300 mb-1.5">Membership Form URL (optional)</label>
+                            <input
+                              type="url"
+                              name="membership_form_url"
+                              value={formData.membership_form_url || ''}
+                              onChange={handleSettingsChange}
+                              placeholder="https://forms.google.com/... or Google Form link"
+                              className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-sm"
+                            />
+                            <p className="text-xs text-slate-500 mt-1.5">Link to your custom membership form (Google Forms, Typeform, etc.). Users will be redirected here when they click "Membership".</p>
                           </div>
                         </div>
 

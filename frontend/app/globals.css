@@ -315,18 +315,80 @@ a, button, input, select, textarea, [role="button"] {
    Triggered by IntersectionObserver (class applied via JS).
    ═══════════════════════════════════════════════════════════ */
 
+/* Vertical slide-in (mobile/tablet steps) */
 @keyframes journeyStepIn {
-  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .journey-step {
-  animation: journeyStepIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: journeyStepIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Horizontal left-to-right slide-in (desktop steps) — more dramatic */
+@keyframes journeyStepInRight {
+  from { opacity: 0; transform: translateX(-30px) scale(0.92); filter: blur(4px); }
+  to { opacity: 1; transform: translateX(0) scale(1); filter: blur(0); }
+}
+
+.journey-step-horizontal {
+  animation: journeyStepInRight 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Node pop-in (layered on top of step animation) */
+@keyframes journeyNodePop {
+  0% { transform: scale(0.3); opacity: 0; }
+  60% { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.journey-node-pop {
+  animation: journeyNodePop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Card reveal — slight upward drift + fade */
+@keyframes journeyCardReveal {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.journey-card-reveal {
+  animation: journeyCardReveal 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Vertical line draw */
 @keyframes journeyLineDraw {
   from { transform: scaleY(0); }
   to { transform: scaleY(1); }
+}
+
+/* Horizontal line draw — smooth left-to-right */
+@keyframes journeyLineDrawH {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+/* Subtle glow pulse after line finishes drawing */
+@keyframes journeyLineGlow {
+  0%, 100% { box-shadow: 0 0 4px rgba(245, 158, 11, 0.15); opacity: 1; }
+  50% { box-shadow: 0 0 12px rgba(245, 158, 11, 0.35); opacity: 0.85; }
+}
+
+/* Draw (1.4s) + glow pulse starts after draw completes (~1.5s) */
+.journey-line-draw-h {
+  animation:
+    journeyLineDrawH 1.4s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both,
+    journeyLineGlow 3s ease-in-out 1.6s infinite;
+}
+
+/* Arrow connector fade-in */
+@keyframes journeyArrowIn {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.journey-arrow-in {
+  animation: journeyArrowIn 0.4s ease both;
 }
 
 /* Gentle breathing pulse for stat section icons */
@@ -356,8 +418,16 @@ a, button, input, select, textarea, [role="button"] {
 
 @media (prefers-reduced-motion: reduce) {
   .journey-step,
+  .journey-step-horizontal,
+  .journey-node-pop,
+  .journey-card-reveal,
   .journey-line-draw,
+  .journey-line-draw-h,
+  .journey-arrow-in,
   .stat-icon-pulse {
     animation: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
   }
 }

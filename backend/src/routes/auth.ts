@@ -7,9 +7,14 @@ import path from 'path';
 import fs from 'fs';
 import { query } from '../db';
 import { authMiddleware, AuthRequest, optionalAuth } from '../middleware/auth';
-import { sendEmail, verificationEmail, passwordResetEmail } from '../email';
+import { sendEmail, verificationCodeEmail, passwordResetCodeEmail, applicationApprovedEmail } from '../email';
 
 const router = express.Router();
+
+// Generate a 6-digit numeric code
+function generateCode(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 
 // Helper to set the JWT as an httpOnly cookie
 function setTokenCookie(res: express.Response, token: string) {
@@ -21,45 +26,175 @@ function setTokenCookie(res: express.Response, token: string) {
   });
 }
 
+// ─── Registration Flow ───
+// POST /api/auth/register - Send verification code (does NOT create user yet)
 router.post('/register', async (req, res, next) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'Name, email, and password are required' });
   }
 
-  try {
-    const hashedPassword = await bcryptjs.hash(password, 10);
-    const verificationToken = crypto.randomBytes(32).toString('hex');
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
 
-    const result = await query(
-      'INSERT INTO users (name, email, password, verification_token) VALUES ($1, $2, $3, $4) RETURNING id, name, email',
-      [name, email, hashedPassword, verificationToken]
+  try {
+    // Check if user already exists
+    const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
+
+    // Invalidate any previous pending registration codes for this email
+    await query(
+      "UPDATE verification_codes SET used = TRUE WHERE email = $1 AND purpose = 'registration'",
+      [email]
     );
+
+    // Generate code and hash password
+    const code = generateCode();
+    const hashedPassword = await bcryptjs.hash(password, 10);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Store the pending registration
+    await query(
+      `INSERT INTO verification_codes (email, code, purpose, name, password, expires_at)
+       VALUES ($1, $2, 'registration', $3, $4, $5)`,
+      [email, code, name, hashedPassword, expiresAt]
+    );
+
+    // Send verification code email (non-blocking)
+    const emailContent = verificationCodeEmail(name, code);
+    sendEmail(email, emailContent.subject, emailContent.html).catch((err) =>
+      console.error('Failed to send verification code email:', err)
+    );
+
+    res.status(200).json({
+      message: 'Verification code sent to your email',
+      email,
+    });
+  } catch (error: any) {
+    next(error);
+  }
+});
+
+// POST /api/auth/verify-registration - Verify code and create user account
+router.post('/verify-registration', async (req, res, next) => {
+  const { email, code } = req.body;
+  if (!email || !code) {
+    return res.status(400).json({ error: 'Email and verification code are required' });
+  }
+
+  try {
+    const result = await query(
+      `SELECT id, name, password, expires_at FROM verification_codes
+       WHERE email = $1 AND code = $2 AND purpose = 'registration' AND used = FALSE`,
+      [email, code]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
+
+    const record = result.rows[0];
+
+    // Check if code expired
+    if (new Date(record.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
+    }
+
+    // Mark the code as used
+    await query('UPDATE verification_codes SET used = TRUE WHERE id = $1', [record.id]);
+
+    // Create the user account
+    const userResult = await query(
+      'INSERT INTO users (name, email, password, email_verified) VALUES ($1, $2, $3, TRUE) RETURNING id, name, email, role',
+      [record.name, email, record.password]
+    );
+
+    const user = userResult.rows[0];
 
     // Log activity
     await query(
       'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
-      [result.rows[0].id, name, 'user_registered', `New user registered: ${email}`]
+      [user.id, user.name, 'user_registered', `New user registered: ${email}`]
     );
 
-    // Send verification email (non-blocking, errors caught)
-    const emailContent = verificationEmail(name, verificationToken);
-    sendEmail(email, emailContent.subject, emailContent.html).catch((err) =>
-      console.error('Failed to send verification email:', err)
-    );
+    // Generate JWT token and set cookie
+    const jwtSecret = process.env.JWT_SECRET || 'secret-key';
+    const token = jwt.sign({ id: user.id, role: user.role }, jwtSecret, {
+      expiresIn: '7d',
+    });
+
+    setTokenCookie(res, token);
 
     res.status(201).json({
-      ...result.rows[0],
-      message: 'Account created! Please check your email to verify your account.',
+      message: 'Account created successfully!',
+      token,
+      user,
     });
   } catch (error: any) {
-    if (error.message.includes('duplicate')) {
+    if (error.message && error.message.includes('duplicate')) {
       return res.status(400).json({ error: 'Email already exists' });
     }
     next(error);
   }
 });
 
+// POST /api/auth/resend-verification-code - Resend verification code for registration
+router.post('/resend-verification-code', async (req, res, next) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  try {
+    // Check if there's a pending registration
+    const pending = await query(
+      "SELECT name, password FROM verification_codes WHERE email = $1 AND purpose = 'registration' AND used = FALSE AND expires_at > NOW()",
+      [email]
+    );
+
+    if (pending.rows.length === 0) {
+      // Check if user already exists
+      const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
+      if (existing.rows.length > 0) {
+        return res.status(400).json({ error: 'This email is already registered. Please log in.' });
+      }
+      return res.status(400).json({ error: 'No pending registration found. Please start registration again.' });
+    }
+
+    const record = pending.rows[0];
+
+    // Invalidate old codes
+    await query(
+      "UPDATE verification_codes SET used = TRUE WHERE email = $1 AND purpose = 'registration'",
+      [email]
+    );
+
+    // Generate new code
+    const code = generateCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await query(
+      `INSERT INTO verification_codes (email, code, purpose, name, password, expires_at)
+       VALUES ($1, $2, 'registration', $3, $4, $5)`,
+      [email, code, record.name, record.password, expiresAt]
+    );
+
+    // Send new code
+    const emailContent = verificationCodeEmail(record.name, code);
+    sendEmail(email, emailContent.subject, emailContent.html).catch((err) =>
+      console.error('Failed to resend verification code:', err)
+    );
+
+    res.json({ message: 'New verification code sent to your email' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/auth/login
 router.post('/login', async (req, res, next) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -96,10 +231,8 @@ router.post('/login', async (req, res, next) => {
       expiresIn: '7d',
     });
 
-    // Set httpOnly cookie (secure, persists across browser sessions)
     setTokenCookie(res, token);
 
-    // Check if user needs onboarding (no interests set yet)
     const needsOnboarding = !user.interests || user.interests.trim() === '';
 
     res.json({
@@ -154,19 +287,16 @@ router.put('/change-password', authMiddleware, async (req: AuthRequest, res, nex
     const hashedPassword = await bcryptjs.hash(new_password, 10);
     await query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, req.userId]);
 
-    // Clear the temp password in the application record
     await query(
       'UPDATE organizer_applications SET temp_password = NULL WHERE user_id = $1 AND status = $2',
       [req.userId, 'approved']
     );
 
-    // Generate new token
     const jwtSecret = process.env.JWT_SECRET || 'secret-key';
     const token = jwt.sign({ id: req.userId, role: req.userRole }, jwtSecret, {
       expiresIn: '7d',
     });
 
-    // Update the httpOnly cookie with the new token
     setTokenCookie(res, token);
 
     res.json({ message: 'Password changed successfully', token });
@@ -175,14 +305,14 @@ router.put('/change-password', authMiddleware, async (req: AuthRequest, res, nex
   }
 });
 
-// POST /api/auth/logout - Clear the auth cookie
+// POST /api/auth/logout
 router.post('/logout', (_req, res) => {
   res.clearCookie('token', { path: '/' });
   res.json({ message: 'Logged out successfully' });
 });
 
-// ─── Forgot Password ───
-// POST /api/auth/forgot-password - Send password reset email
+// ─── Forgot Password Flow ───
+// POST /api/auth/forgot-password - Send password reset code
 router.post('/forgot-password', async (req, res, next) => {
   const { email } = req.body;
   if (!email) {
@@ -194,22 +324,31 @@ router.post('/forgot-password', async (req, res, next) => {
 
     // Always return success to prevent email enumeration
     if (userResult.rows.length === 0) {
-      return res.json({ message: 'If that email exists, a password reset link has been sent.' });
+      return res.json({ message: 'If that email exists, a password reset code has been sent.' });
     }
 
     const user = userResult.rows[0];
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
+    // Invalidate any previous reset codes for this email
     await query(
-      'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
-      [resetToken, expiresAt, user.id]
+      "UPDATE verification_codes SET used = TRUE WHERE email = $1 AND purpose = 'password_reset'",
+      [email]
     );
 
-    // Send password reset email (non-blocking)
-    const emailContent = passwordResetEmail(user.name, resetToken);
+    // Generate code
+    const code = generateCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    await query(
+      `INSERT INTO verification_codes (email, code, purpose, expires_at)
+       VALUES ($1, $2, 'password_reset', $3)`,
+      [email, code, expiresAt]
+    );
+
+    // Send code (non-blocking)
+    const emailContent = passwordResetCodeEmail(user.name, code);
     sendEmail(email, emailContent.subject, emailContent.html).catch((err) =>
-      console.error('Failed to send password reset email:', err)
+      console.error('Failed to send password reset code:', err)
     );
 
     // Log activity
@@ -218,19 +357,96 @@ router.post('/forgot-password', async (req, res, next) => {
       [user.id, user.name, 'password_reset_requested', `Password reset requested for ${email}`]
     );
 
-    res.json({ message: 'If that email exists, a password reset link has been sent.' });
+    res.json({ message: 'If that email exists, a password reset code has been sent.' });
   } catch (error) {
     next(error);
   }
 });
 
-// ─── Reset Password ───
-// POST /api/auth/reset-password - Reset password with token
-router.post('/reset-password', async (req, res, next) => {
-  const { token, new_password } = req.body;
+// POST /api/auth/verify-reset-code - Verify password reset code
+router.post('/verify-reset-code', async (req, res, next) => {
+  const { email, code } = req.body;
+  if (!email || !code) {
+    return res.status(400).json({ error: 'Email and verification code are required' });
+  }
 
-  if (!token || !new_password) {
-    return res.status(400).json({ error: 'Token and new password are required' });
+  try {
+    const result = await query(
+      `SELECT id, expires_at FROM verification_codes
+       WHERE email = $1 AND code = $2 AND purpose = 'password_reset' AND used = FALSE`,
+      [email, code]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
+
+    const record = result.rows[0];
+
+    // Check if code expired
+    if (new Date(record.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
+    }
+
+    // Mark as used
+    await query('UPDATE verification_codes SET used = TRUE WHERE id = $1', [record.id]);
+
+    res.json({ message: 'Code verified successfully. You can now set a new password.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/auth/resend-reset-code - Resend password reset code
+router.post('/resend-reset-code', async (req, res, next) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  try {
+    const userResult = await query('SELECT id, name, email FROM users WHERE email = $1', [email]);
+
+    // Always return success
+    if (userResult.rows.length === 0) {
+      return res.json({ message: 'If that email exists, a new password reset code has been sent.' });
+    }
+
+    const user = userResult.rows[0];
+
+    // Invalidate old codes
+    await query(
+      "UPDATE verification_codes SET used = TRUE WHERE email = $1 AND purpose = 'password_reset'",
+      [email]
+    );
+
+    // Generate new code
+    const code = generateCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await query(
+      `INSERT INTO verification_codes (email, code, purpose, expires_at)
+       VALUES ($1, $2, 'password_reset', $3)`,
+      [email, code, expiresAt]
+    );
+
+    const emailContent = passwordResetCodeEmail(user.name, code);
+    sendEmail(email, emailContent.subject, emailContent.html).catch((err) =>
+      console.error('Failed to resend password reset code:', err)
+    );
+
+    res.json({ message: 'If that email exists, a new password reset code has been sent.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/auth/reset-password - Reset password with code
+router.post('/reset-password', async (req, res, next) => {
+  const { email, code, new_password } = req.body;
+
+  if (!email || !code || !new_password) {
+    return res.status(400).json({ error: 'Email, code, and new password are required' });
   }
 
   if (new_password.length < 6) {
@@ -238,22 +454,35 @@ router.post('/reset-password', async (req, res, next) => {
   }
 
   try {
-    const userResult = await query(
-      'SELECT id, name, email FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()',
-      [token]
+    // Find and validate the verification code
+    const codeResult = await query(
+      `SELECT id, expires_at FROM verification_codes
+       WHERE email = $1 AND code = $2 AND purpose = 'password_reset' AND used = FALSE`,
+      [email, code]
     );
 
+    if (codeResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or already used verification code' });
+    }
+
+    const record = codeResult.rows[0];
+
+    if (new Date(record.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Verification code has expired' });
+    }
+
+    // Mark code as used
+    await query('UPDATE verification_codes SET used = TRUE WHERE id = $1', [record.id]);
+
+    // Find user and update password
+    const userResult = await query('SELECT id, name, email FROM users WHERE email = $1', [email]);
     if (userResult.rows.length === 0) {
-      return res.status(400).json({ error: 'Invalid or expired reset token' });
+      return res.status(404).json({ error: 'User not found' });
     }
 
     const user = userResult.rows[0];
     const hashedPassword = await bcryptjs.hash(new_password, 10);
-
-    await query(
-      'UPDATE users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2',
-      [hashedPassword, user.id]
-    );
+    await query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, user.id]);
 
     // Log activity
     await query(
@@ -262,44 +491,6 @@ router.post('/reset-password', async (req, res, next) => {
     );
 
     res.json({ message: 'Password has been reset successfully. You can now log in.' });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// ─── Verify Email ───
-// POST /api/auth/verify-email - Verify email address with token
-router.post('/verify-email', async (req, res, next) => {
-  const { token } = req.body;
-
-  if (!token) {
-    return res.status(400).json({ error: 'Verification token is required' });
-  }
-
-  try {
-    const userResult = await query(
-      'SELECT id, name, email FROM users WHERE verification_token = $1 AND email_verified = FALSE',
-      [token]
-    );
-
-    if (userResult.rows.length === 0) {
-      return res.status(400).json({ error: 'Invalid or already verified token' });
-    }
-
-    const user = userResult.rows[0];
-
-    await query(
-      'UPDATE users SET email_verified = TRUE, verification_token = NULL WHERE id = $1',
-      [user.id]
-    );
-
-    // Log activity
-    await query(
-      'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
-      [user.id, user.name, 'email_verified', `Email verified for ${user.email}`]
-    );
-
-    res.json({ message: 'Email verified successfully! You can now log in.' });
   } catch (error) {
     next(error);
   }
@@ -372,7 +563,6 @@ router.post('/banner', authMiddleware, uploadBanner.single('banner'), async (req
 
     const bannerUrl = '/uploads/banners/' + req.file.filename;
 
-    // Delete old banner file if exists
     const oldUser = await query('SELECT banner_image FROM users WHERE id = $1', [req.userId]);
     if (oldUser.rows.length > 0 && oldUser.rows[0].banner_image) {
       const oldPath = path.join(__dirname, '../..', oldUser.rows[0].banner_image);
@@ -392,7 +582,7 @@ router.post('/banner', authMiddleware, uploadBanner.single('banner'), async (req
   }
 });
 
-// DELETE /api/auth/banner - Remove profile banner
+// DELETE /api/auth/banner
 router.delete('/banner', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     const user = await query('SELECT banner_image FROM users WHERE id = $1', [req.userId]);
@@ -410,6 +600,7 @@ router.delete('/banner', authMiddleware, async (req: AuthRequest, res, next) => 
   }
 });
 
+// GET /api/auth/me
 router.get('/me', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     const result = await query(
@@ -420,7 +611,6 @@ router.get('/me', authMiddleware, async (req: AuthRequest, res, next) => {
       return res.status(404).json({ error: 'User not found' });
     }
     const user = result.rows[0];
-    // Check if user owns any communities
     const ownedResult = await query(
       'SELECT COUNT(*) as count FROM communities WHERE owner_id = $1 AND deleted_at IS NULL',
       [req.userId]
@@ -432,7 +622,7 @@ router.get('/me', authMiddleware, async (req: AuthRequest, res, next) => {
   }
 });
 
-// POST /api/auth/avatar - Upload profile avatar
+// POST /api/auth/avatar
 router.post('/avatar', authMiddleware, uploadAvatar.single('avatar'), async (req: AuthRequest, res, next) => {
   try {
     if (!req.file) {
@@ -441,7 +631,6 @@ router.post('/avatar', authMiddleware, uploadAvatar.single('avatar'), async (req
 
     const avatarUrl = '/uploads/avatars/' + req.file.filename;
 
-    // Delete old avatar file if exists
     const oldUser = await query('SELECT avatar_url FROM users WHERE id = $1', [req.userId]);
     if (oldUser.rows.length > 0 && oldUser.rows[0].avatar_url) {
       const oldPath = path.join(__dirname, '../..', oldUser.rows[0].avatar_url);
@@ -461,7 +650,7 @@ router.post('/avatar', authMiddleware, uploadAvatar.single('avatar'), async (req
   }
 });
 
-// DELETE /api/auth/avatar - Remove profile avatar
+// DELETE /api/auth/avatar
 router.delete('/avatar', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     const user = await query('SELECT avatar_url FROM users WHERE id = $1', [req.userId]);
@@ -479,6 +668,7 @@ router.delete('/avatar', authMiddleware, async (req: AuthRequest, res, next) => 
   }
 });
 
+// PUT /api/auth/profile
 router.put('/profile', authMiddleware, async (req: AuthRequest, res, next) => {
   const { name, bio, interests } = req.body;
   try {

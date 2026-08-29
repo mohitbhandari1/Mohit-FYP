@@ -54,6 +54,27 @@ router.post('/:communityId', authMiddleware, async (req: AuthRequest, res, next)
       [req.userId, user.rows[0]?.name || '', 'announcement_created', `Posted announcement "${title}" in ${community.rows[0].name}`]
     );
 
+    // ─── Notify all community members about the new announcement ───
+    const communityName = community.rows[0].name;
+    const communityLogo = community.rows[0].logo || null;
+    const members = await query(
+      'SELECT user_id FROM community_members WHERE community_id = $1 AND user_id != $2',
+      [communityId, req.userId]
+    );
+
+    if (members.rows.length > 0) {
+      const { createNotificationsForUsers } = await import('../notificationHelper');
+      const memberIds = members.rows.map((m: any) => m.user_id);
+      createNotificationsForUsers(
+        memberIds,
+        'announcement',
+        `New Announcement in ${communityName}`,
+        title,
+        `/communities/${communityId}`,
+        communityLogo
+      ).catch((err) => console.error('Failed to create announcement notifications:', err));
+    }
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     next(error);

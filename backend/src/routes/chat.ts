@@ -51,18 +51,23 @@ function parseActions(response: string): { type: string; id?: number; name: stri
 
 /**
  * Builds an interest-aware ORDER BY expression (rank matches first, then fall back).
+ * Combines explicit user interests with participation-derived categories for richer ranking.
  * Never filters rows out — non-matching items just rank lower.
  */
-function interestRanking(column: string, interests: string, paramStart: number): { orderBy: string; params: string[] } {
-  const parts = (interests || '')
+function interestRanking(column: string, interests: string, paramStart: number, participationCategories: string[] = []): { orderBy: string; params: string[] } {
+  const interestParts = (interests || '')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean);
-  if (parts.length === 0) return { orderBy: '', params: [] };
-  const cases = parts
+
+  // Merge interests with participation-derived categories (deduplicated)
+  const allParts = [...new Set([...interestParts, ...participationCategories])];
+
+  if (allParts.length === 0) return { orderBy: '', params: [] };
+  const cases = allParts
     .map((_, i) => `(CASE WHEN ${column} ILIKE $${paramStart + i} THEN 1 ELSE 0 END)`)
     .join(' + ');
-  return { orderBy: `(${cases}) DESC`, params: parts.map(p => `%${p}%`) };
+  return { orderBy: `(${cases}) DESC`, params: allParts.map(p => `%${p}%`) };
 }
 
 /**
@@ -70,7 +75,7 @@ function interestRanking(column: string, interests: string, paramStart: number):
  * the SQL step, so common questions use only ONE Gemini request (free-tier quota friendly).
  * Returns null when no template matches — then the two-pass flow is used.
  */
-function detectTemplate(message: string, interests: string): { sql: string; params: any[]; label: string } | null {
+function detectTemplate(message: string, interests: string, participationCategories: string[] = []): { sql: string; params: any[]; label: string } | null {
   const m = message.toLowerCase();
 
   const eventsBase = `SELECT e.id, e.title, e.event_date, e.location, e.description, c.name AS community_name
@@ -113,14 +118,27 @@ function detectTemplate(message: string, interests: string): { sql: string; para
     };
   }
 
-  // Recommended events (interest-first)
+  // Recommended events (interest-first + participation history)
   if (/(recommend|suggest).*(event|thing|do)|event.*(recommend|suggest)/.test(m)) {
-    const rank = interestRanking('c.category', interests, 1);
+    const rank = interestRanking('c.category', interests, 1, participationCategories);
     const base = `${eventsBase} AND e.event_date >= NOW()`;
     const sql = rank.orderBy
       ? `${base} ORDER BY ${rank.orderBy}, e.event_date ASC LIMIT 3`
       : `${base} ORDER BY e.event_date ASC LIMIT 3`;
     return { sql, params: rank.params, label: 'events_recommend' };
+  }
+
+  // Event creation assistance — matches requests to create, describe, or plan an event
+  // No SQL needed — just set the intent label so Pass 2 gets the event_create hint.
+  if (/(?:create|make|new|plan|organize|set up|build).*(?:event|workshop|meetup|session|conference|seminar)/.test(m)
+    || /(?:event|workshop|meetup|session|conference|seminar).*(?:create|make|new|plan|organize|help|idea)/.test(m)
+    || /(?:help|write|generate|draft|create|make).*(?:description|desc|about|details?).*(?:event|workshop|meetup)/.test(m)
+    || /(?:event|workshop|meetup).*(?:description|desc|write|draft|generate)/.test(m)
+    || /(?:i'?m?\s+)?(?:creating|making|planning|organizing|hosting)\s+(?:an?\s+)?(?:event|workshop|meetup|session)/.test(m)
+    || /(?:write|generate|draft|create|make|help).*(?:event|workshop|meetup)\s+(?:description|desc|detail)/.test(m)
+    || /\b(event|workshop|meetup|session|conference|seminar)\b.*\b(description|title|name|about)\b/.test(m)
+    || /\b(description|title|name|about)\b.*\b(event|workshop|meetup|session|conference|seminar)\b/.test(m)) {
+    return null; // Signal "no template matched" so we skip SQL, but we'll detect intent below
   }
 
   // All communities (explicit request for everything/table)
@@ -134,7 +152,7 @@ function detectTemplate(message: string, interests: string): { sql: string; para
 
   // Communities list / recommendations
   if (/(communities|clubs?|sangha|groups)/.test(m)) {
-    const rank = interestRanking('category', interests, 1);
+    const rank = interestRanking('category', interests, 1, participationCategories);
     const base = `SELECT id, name, description, category, member_count FROM communities WHERE deleted_at IS NULL`;
     const sql = rank.orderBy
       ? `${base} ORDER BY ${rank.orderBy}, member_count DESC LIMIT 3`
@@ -161,8 +179,20 @@ function buildFallbackReply(rows: Record<string, any>[], intentLabel: string, us
 
   const lines: string[] = [];
   if (isFirstMessage && userName) lines.push(`Hello ${userName}! 👋`, '');
-  if (rows.length === 0) {
+  if (rows.length === 0 && intentLabel !== 'event_create') {
     lines.push('I could not find any matching results right now. Please try again in a moment.');
+    return lines.join('\n');
+  }
+
+  if (intentLabel === 'event_create') {
+    lines.push("I'd love to help you create an amazing event! 🎉");
+    lines.push('');
+    lines.push('Tell me your **event title** and a **brief description** (even just a few words), and I\'ll generate:');
+    lines.push('• A compelling, copy-paste-ready event description');
+    lines.push('• Suggested topics, event type, and other details');
+    lines.push('• Tips to maximize attendance');
+    lines.push('');
+    lines.push('For example: *"I\'m creating a Tech Workshop about Python programming for beginners"*');
     return lines.join('\n');
   }
 
@@ -176,8 +206,10 @@ function buildFallbackReply(rows: Record<string, any>[], intentLabel: string, us
           ? 'Here are the communities:'
           : intentLabel.includes('recommend')
             ? 'Here are the recommendations for you:'
-            : 'Here are the results:';
-  lines.push(headline, '');
+            : intentLabel.includes('event_create')
+              ? ''
+              : 'Here are the results:';
+  if (headline) lines.push(headline, '');
 
   // Full-list requests → pipe table with all rows
   if (intentLabel.includes('_all') && rows.length > 3) {
@@ -224,18 +256,88 @@ router.post('/', optionalAuth, async (req: AuthRequest, res, next) => {
     // Greet the user by name — fetch their profile from the database (if logged in).
     let userName = '';
     let userInterests = '';
+    let userBio = '';
+    let userHistory = '';
+
     if (req.userId) {
       try {
-        const userRes = await query('SELECT name, interests FROM users WHERE id = $1', [req.userId]);
+        const userRes = await query('SELECT name, interests, bio FROM users WHERE id = $1', [req.userId]);
         userName = userRes.rows[0]?.name || '';
         userInterests = userRes.rows[0]?.interests || '';
+        userBio = userRes.rows[0]?.bio || '';
       } catch (userErr) {
         console.error('Failed to load user profile for chat:', userErr);
       }
+
+      // Fetch participation history: RSVPs, joined communities, saved events
+      try {
+        const historyParts: string[] = [];
+
+        // Recent RSVPs (events they attended)
+        const rsvpRes = await query(
+          `SELECT e.title, c.name AS community_name, c.category, e.event_date
+           FROM rsvps r
+           JOIN events e ON r.event_id = e.id
+           JOIN communities c ON e.community_id = c.id
+           WHERE r.user_id = $1 AND r.status = 'attending'
+             AND e.deleted_at IS NULL AND c.deleted_at IS NULL
+           ORDER BY e.event_date DESC LIMIT 5`,
+          [req.userId]
+        );
+        if (rsvpRes.rows.length > 0) {
+          historyParts.push('Events Attended: ' + rsvpRes.rows.map((r: any) =>
+            `${r.title} (${r.category || 'Unknown'} — ${r.community_name})`
+          ).join(', '));
+        }
+
+        // Joined communities
+        const memberRes = await query(
+          `SELECT c.name, c.category
+           FROM community_members cm
+           JOIN communities c ON cm.community_id = c.id
+           WHERE cm.user_id = $1 AND c.deleted_at IS NULL
+           ORDER BY cm.joined_at DESC LIMIT 5`,
+          [req.userId]
+        );
+        if (memberRes.rows.length > 0) {
+          historyParts.push('Communities Joined: ' + memberRes.rows.map((r: any) =>
+            `${r.name} (${r.category || 'Unknown'})`
+          ).join(', '));
+        }
+
+        // Saved/bookmarked events
+        const savedRes = await query(
+          `SELECT e.title, c.category
+           FROM saved_events se
+           JOIN events e ON se.event_id = e.id
+           JOIN communities c ON e.community_id = c.id
+           WHERE se.user_id = $1
+             AND e.deleted_at IS NULL AND c.deleted_at IS NULL
+           ORDER BY se.created_at DESC LIMIT 5`,
+          [req.userId]
+        );
+        if (savedRes.rows.length > 0) {
+          historyParts.push('Saved Events: ' + savedRes.rows.map((r: any) =>
+            `${r.title} (${r.category || 'Unknown'})`
+          ).join(', '));
+        }
+
+        userHistory = historyParts.join('\n');
+      } catch (histErr) {
+        console.error('Failed to load user history for chat:', histErr);
+      }
     }
 
+    const userBlock = [
+      `ID: ${req.userId}`,
+      `Name: ${userName || 'Unknown'}`,
+      userInterests ? `Interests: ${userInterests}` : '',
+      userBio ? `Bio: ${userBio}` : '',
+      userHistory ? `Participation History:\n${userHistory}` : '',
+    ].filter(Boolean).join('\n');
+
     const contextHeader = [
-      `## Current User\nID: ${req.userId}\nName: ${userName || 'Unknown'}${userInterests ? `\nInterests: ${userInterests}` : ''}\n`,
+      `## Current User\n${userBlock}\n`,
       `## Database Schema\n${SCHEMA}`,
     ].join('\n\n');
 
@@ -244,14 +346,41 @@ router.post('/', optionalAuth, async (req: AuthRequest, res, next) => {
     let sqlParams: any[] = [];
     let intentLabel = '';
 
-    const template = detectTemplate(message, userInterests);
+    // Extract categories from participation history for interest-based ranking
+    const participationCategories: string[] = [];
+    if (userHistory) {
+      const catMatches = userHistory.match(/\(([^)]+)\)/g) || [];
+      for (const match of catMatches) {
+        const cat = match.replace(/[()]/g, '').trim();
+        if (cat && cat !== 'Unknown' && !cat.includes(' — ')) {
+          participationCategories.push(cat);
+        }
+      }
+    }
+
+    const template = detectTemplate(message, userInterests, participationCategories);
     if (template) {
       sql = template.sql;
       sqlParams = template.params;
       intentLabel = template.label;
     } else {
-      // ─── Pass 1: Ask Gemini for a SQL query only ─────────────────────
-      const sqlPrompt = `${contextHeader}
+      // ─── Check for event creation intent (no SQL needed) ──────────────
+      const m = message.toLowerCase();
+      const isEventCreate = /(?:create|make|new|plan|organize|set up|build).*(?:event|workshop|meetup|session|conference|seminar)/.test(m)
+        || /(?:event|workshop|meetup|session|conference|seminar).*(?:create|make|new|plan|organize|help|idea)/.test(m)
+        || /(?:help|write|generate|draft|create|make).*(?:description|desc|about|details?).*(?:event|workshop|meetup)/.test(m)
+        || /(?:event|workshop|meetup).*(?:description|desc|write|draft|generate)/.test(m)
+        || /(?:i'?m?\s+)?(?:creating|making|planning|organizing|hosting)\s+(?:an?\s+)?(?:event|workshop|meetup|session)/.test(m)
+        || /(?:write|generate|draft|create|make|help).*(?:event|workshop|meetup)\s+(?:description|desc|detail)/.test(m)
+        || /\b(event|workshop|meetup|session|conference|seminar)\b.*\b(description|title|name|about)\b/.test(m)
+        || /\b(description|title|name|about)\b.*\b(event|workshop|meetup|session|conference|seminar)\b/.test(m);
+
+      if (isEventCreate) {
+        intentLabel = 'event_create';
+        // No SQL needed — skip to Pass 2 directly
+      } else {
+        // ─── Pass 1: Ask Gemini for a SQL query only ─────────────────────
+        const sqlPrompt = `${contextHeader}
 
 ## Task
 Decide whether you need to query the database to answer this question: "${message.trim()}"
@@ -262,14 +391,15 @@ If you can answer without a database query, output exactly: NO_QUERY
 ## Query rules
 - ONLY SELECT queries. Always use LIMIT (max 20).
 - In normal conversation, LIMIT results to 3. Only return ALL matching rows (LIMIT 10) when the user explicitly asks for everything, a full list, or a table.
-- For recommendations, ORDER BY the user's interests first (from ## Current User) and then by popularity (member_count for communities, attendee_count or event_date for events).
+- For recommendations, ORDER BY the user's interests AND participation history categories FIRST (from ## Current User — look at both the "Interests" field and the "Participation History" categories in parentheses), then by popularity (member_count for communities, attendee_count or event_date for events).
 - Always filter soft-deleted rows with deleted_at IS NULL.`;
 
-      const sqlRaw = (await generateWithRetry(model, sqlPrompt)).trim();
-      const sqlMatch = sqlRaw.match(/<sql>([\s\S]*?)<\/sql>/i);
-      if (sqlMatch) {
-        sql = sanitizeSql(sqlMatch[1].trim());
-        intentLabel = /from\s+events\b/i.test(sql) ? 'events' : '';
+        const sqlRaw = (await generateWithRetry(model, sqlPrompt)).trim();
+        const sqlMatch = sqlRaw.match(/<sql>([\s\S]*?)<\/sql>/i);
+        if (sqlMatch) {
+          sql = sanitizeSql(sqlMatch[1].trim());
+          intentLabel = /from\s+events\b/i.test(sql) ? 'events' : '';
+        }
       }
     }
 
@@ -310,7 +440,31 @@ If you can answer without a database query, output exactly: NO_QUERY
 Write the final response to the user for this question: "${message.trim()}"
 
 ${greetingRule}
-${intentLabel ? `\n## Intent hint\nThe query is for the "${intentLabel}" intent — write the reply to match the user's question (e.g. introduce events with a line like "Here are the events happening this month:").` : ''}
+${intentLabel === 'event_create' ? `
+## Intent hint
+The user wants help creating or describing an event. They may have provided an event title, a brief description, or both.
+
+Based on what they provided:
+- If they gave a TITLE only: Generate a full description, suggest topics, event type, agenda, and requirements.
+- If they gave a TITLE + DESCRIPTION: Polish and expand their description into a compelling, detailed version. Suggest additional fields.
+- If they asked generic help (e.g., "help me create an event"): Explain what you can do and ask them to share the event title and a brief idea.
+
+Your response MUST include:
+1. **Generated Description**: A polished, copy-paste-ready event description (at least 3-4 sentences) with:
+   - An engaging hook/opening line
+   - What attendees can expect (2-3 paragraphs)
+   - Who should attend
+   - A call-to-action closing line
+2. **Suggested Details**: Based on the title/description, recommend:
+   - Event type (physical/virtual/hybrid)
+   - 2-4 relevant topics from: Technology, Chess, Networking, Workshop, Education, Music, Sports, Art, Business, Social Service, Environment, Health, Gaming, Photography, Cooking, Literature, Dance, Theater, Film, Fashion
+   - Sample agenda (if applicable)
+   - Requirements for attendees
+   - Instructions (if relevant)
+3. **Pro Tips**: 2-3 tips to maximize attendance (e.g., banner image, seat limit, registration questions)
+
+Use emojis as section markers (📌, 🎯, 💡, etc.). Keep the tone professional yet exciting.
+Always end with <action type="view" url="/events/create" name="Create Your Event" /> so they can go create it right away.` : intentLabel ? `\n## Intent hint\nThe query is for the "${intentLabel}" intent — write the reply to match the user's question (e.g. introduce events with a line like "Here are the events happening this month:").` : ''}
 
 ${sql && !queryFailed
   ? `## Actual query results (REAL data from the database)
@@ -329,7 +483,12 @@ Use the results above. If they include events, add ONE <action type="rsvp" id="{
   - a short 1-2 line description
   Then add ONE <action type="rsvp" id="{ID}" name="View {Title}" /> per item, and end with a <action type="view" url="/events" name="View More Events" /> button.
 - **Full list**: ONLY when the user explicitly asks for ALL events/communities or asks for a table, show the full details (up to 10) as a pipe table.
-- **Recommendations**: when the user asks for recommendations/suggestions, prioritize items matching the user's Interests (from ## Current User) FIRST, then popular ones.
+- **Recommendations**: when the user asks for recommendations/suggestions, personalize based on ALL signals from ## Current User:
+  1. **Participation History** (strongest signal): Categories from events attended, communities joined, and saved events — prioritize these.
+  2. **Interests field**: Explicitly stated interests.
+  3. **Bio**: Implicit interests mentioned in their bio text.
+  4. **Popularity**: Fall back to popular items if few personalization signals exist.
+  Briefly explain WHY each recommendation matches them (e.g., "Since you've attended Tech events...", "You might enjoy this based on your Photography interest...").
 - Use <action type="join|rsvp|view|link" ... /> tags for any buttons you want to show.
 - Be friendly and conversational, use emojis sparingly.
 - Reply ONLY with the final message.`;

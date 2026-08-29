@@ -8,7 +8,7 @@ import Chatbot from '../components/Chatbot';
 import { SkeletonTable } from '../components/Skeleton';
 import { apiFetch, BACKEND_URL } from '../lib/auth';
 
-type Tab = 'overview' | 'users' | 'applications' | 'communities' | 'activity' | 'trash';
+type Tab = 'overview' | 'users' | 'applications' | 'communities' | 'membership' | 'activity' | 'trash';
 
 const sidebarTabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
   {
@@ -48,6 +48,15 @@ const sidebarTabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: 'membership',
+    label: 'Membership',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+      </svg>
+    ),
+  },
+  {
     id: 'activity',
     label: 'Activity',
     icon: (
@@ -75,6 +84,9 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [processingApp, setProcessingApp] = useState<number | null>(null);
+  const [membershipApps, setMembershipApps] = useState<any[]>([]);
+  const [selectedCommunity, setSelectedCommunity] = useState<string>('');
+  const [processingMembership, setProcessingMembership] = useState<number | null>(null);
   const [activities, setActivities] = useState<any[]>([]);
   const [activityFilter, setActivityFilter] = useState<string>('all');
   const [loadingActivity, setLoadingActivity] = useState(false);
@@ -129,6 +141,52 @@ export default function AdminDashboard() {
     };
     fetchTrash();
   }, [activeTab]);
+
+  // Fetch membership applications when membership tab is active
+  useEffect(() => {
+    if (activeTab !== 'membership') return;
+    const fetchMembershipApps = async () => {
+      try {
+        // Fetch all communities to let admin select one
+        const commRes = await apiFetch('/api/admin/communities');
+        if (commRes.ok) {
+          const comms = await commRes.json();
+          if (comms.length > 0 && !selectedCommunity) {
+            setSelectedCommunity(String(comms[0].id));
+          }
+        }
+      } catch (err) { console.error('Failed to load communities'); }
+    };
+    fetchMembershipApps();
+  }, [activeTab]);
+
+  // Fetch membership apps when community is selected
+  useEffect(() => {
+    if (activeTab !== 'membership' || !selectedCommunity) return;
+    const fetchApps = async () => {
+      try {
+        const res = await apiFetch(`/api/communities/${selectedCommunity}/membership-applications`);
+        if (res.ok) setMembershipApps(await res.json());
+        else setMembershipApps([]);
+      } catch (err) { setMembershipApps([]); }
+    };
+    fetchApps();
+  }, [activeTab, selectedCommunity]);
+
+  const handleMembershipReview = async (appId: number, status: 'approved' | 'rejected', notes?: string) => {
+    setProcessingMembership(appId);
+    try {
+      const res = await apiFetch(`/api/communities/${selectedCommunity}/membership-applications/${appId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, admin_notes: notes || '' }),
+      });
+      if (res.ok) {
+        setMembershipApps((prev) => prev.map((a) => a.id === appId ? { ...a, status } : a));
+      }
+    } catch (err) { console.error('Failed to review membership app'); }
+    finally { setProcessingMembership(null); }
+  };
 
   // Fetch activity log when tab or filter changes
   useEffect(() => {
@@ -832,6 +890,107 @@ export default function AdminDashboard() {
                     <div className="p-8 text-center text-sm text-slate-500">No applications yet</div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* ═══════════════════════════════════════════════════
+               MEMBERSHIP TAB
+               ═══════════════════════════════════════════════════ */}
+            {activeTab === 'membership' && (
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl overflow-hidden">
+                <div className="p-6 border-b border-white/5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-100">Membership Applications</h2>
+                      <p className="text-sm text-slate-400 mt-1">Review and manage community membership applications</p>
+                    </div>
+                    {/* Community selector */}
+                    <select
+                      value={selectedCommunity}
+                      onChange={(e) => setSelectedCommunity(e.target.value)}
+                      className="px-4 py-2 rounded-xl text-sm border border-white/10 bg-white/[0.03] text-slate-200 focus:border-amber-500/50 focus:outline-none"
+                    >
+                      <option value="">Select community</option>
+                      {communities.map((c: any) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {membershipApps.length === 0 ? (
+                  <div className="p-10 text-center">
+                    <svg className="w-12 h-12 text-slate-600 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                    </svg>
+                    <p className="text-slate-400">
+                      {selectedCommunity ? 'No membership applications found for this community.' : 'Select a community to view membership applications.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-white/5">
+                    {membershipApps.map((app: any) => (
+                      <div key={app.id} className="p-5 hover:bg-white/[0.01] transition-colors">
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <h4 className="font-medium text-slate-200">{app.full_name}</h4>
+                              <span className="text-xs text-slate-500">· {app.email}</span>
+                              <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+                                app.status === 'pending' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : app.status === 'approved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'
+                              }`}>{app.status}</span>
+                            </div>
+                            {app.organization_name && (
+                              <p className="text-xs text-slate-500 mb-1">{app.organization_name} {app.position ? `- ${app.position}` : ''}</p>
+                            )}
+                            <p className="text-sm text-slate-300 mt-2 line-clamp-2">{app.reason}</p>
+                            {app.experience && (
+                              <p className="text-xs text-slate-500 mt-1">Experience: {app.experience}</p>
+                            )}
+                            {app.admin_notes && (
+                              <div className="mt-2 p-2 rounded-lg bg-white/[0.02] border border-white/5">
+                                <p className="text-xs text-slate-500">Admin notes: <span className="text-slate-400">{app.admin_notes}</span></p>
+                              </div>
+                            )}
+                            <p className="text-[10px] text-slate-600 mt-2">Applied {formatDate(app.created_at)}</p>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {app.status === 'pending' ? (
+                              showNotesInput?.id === app.id ? (
+                                <div className="flex items-center gap-2">
+                                  <input type="text" value={adminNotes} onChange={(e) => setAdminNotes(e.target.value)} placeholder="Notes..." className="w-32 px-2.5 py-1.5 text-xs rounded-lg border border-white/10 bg-white/[0.03] text-slate-200 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none" autoFocus />
+                                  <button onClick={() => { handleMembershipReview(app.id, showNotesInput!.action, adminNotes); setShowNotesInput(null); setAdminNotes(''); }}
+                                    disabled={processingMembership === app.id}
+                                    className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50 ${showNotesInput!.action === 'approved' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20'}`}>
+                                    Confirm
+                                  </button>
+                                  <button onClick={() => { setShowNotesInput(null); setAdminNotes(''); }} className="text-xs text-slate-500 hover:text-slate-400">Cancel</button>
+                                </div>
+                              ) : (
+                                <>
+                                  <button onClick={() => setShowNotesInput({ id: app.id, action: 'approved' })}
+                                    disabled={processingMembership === app.id}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all disabled:opacity-50">
+                                    Approve
+                                  </button>
+                                  <button onClick={() => setShowNotesInput({ id: app.id, action: 'rejected' })}
+                                    disabled={processingMembership === app.id}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-all disabled:opacity-50">
+                                    Reject
+                                  </button>
+                                </>
+                              )
+                            ) : (
+                              <span className={`text-xs font-medium ${app.status === 'approved' ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {app.status === 'approved' ? '✓ Approved' : '✗ Rejected'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

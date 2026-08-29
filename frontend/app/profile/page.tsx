@@ -25,6 +25,18 @@ export default function ProfilePage() {
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Notification preferences state
+  const [notifPrefs, setNotifPrefs] = useState({
+    new_event: true,
+    announcement: true,
+    document_approved: true,
+    document_rejected: true,
+    answer_approved: true,
+    answer_rejected: true,
+  });
+  const [prefsSaving, setPrefsSaving] = useState(false);
+  const [prefsSuccess, setPrefsSuccess] = useState('');
+
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       router.push('/login');
@@ -42,6 +54,41 @@ export default function ProfilePage() {
       );
     }
   }, [user]);
+
+  // Fetch notification preferences
+  useEffect(() => {
+    if (isAuthenticated) {
+      apiFetch('/api/notification-preferences')
+        .then((res) => res.ok ? res.json() : null)
+        .then((data) => {
+          if (data) setNotifPrefs(data);
+        })
+        .catch(() => {});
+    }
+  }, [isAuthenticated]);
+
+  // Save notification preferences
+  const saveNotifPrefs = async () => {
+    setPrefsSaving(true);
+    setPrefsSuccess('');
+    try {
+      const res = await apiFetch('/api/notification-preferences', {
+        method: 'PUT',
+        body: JSON.stringify(notifPrefs),
+      });
+      if (res.ok) {
+        setPrefsSuccess('Preferences saved!');
+        setTimeout(() => setPrefsSuccess(''), 3000);
+      }
+    } catch {
+      // Silent fail
+    }
+    setPrefsSaving(false);
+  };
+
+  const togglePref = (key: keyof typeof notifPrefs) => {
+    setNotifPrefs((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const addInterest = () => {
     const tag = interestInput.trim().toLowerCase();
@@ -492,6 +539,81 @@ export default function ProfilePage() {
             </div>
           </div>
 
+          {/* Notification Preferences */}
+          <div className="glass rounded-3xl p-8 mb-6 opacity-0 animate-fade-in-up animate-fill-both animate-delay-300">
+            <h2 className="text-lg font-semibold text-slate-100 mb-6 flex items-center gap-2">
+              <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+              </svg>
+              Notification Preferences
+            </h2>
+
+            {prefsSuccess && (
+              <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-sm text-emerald-300">
+                {prefsSuccess}
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <PrefToggle
+                label="New Events"
+                description="When a community you follow posts a new event"
+                enabled={notifPrefs.new_event}
+                onToggle={() => togglePref('new_event')}
+              />
+              <PrefToggle
+                label="Announcements"
+                description="When a community you follow posts an announcement"
+                enabled={notifPrefs.announcement}
+                onToggle={() => togglePref('announcement')}
+              />
+              <PrefToggle
+                label="Document Approved"
+                description="When your event registration document is approved"
+                enabled={notifPrefs.document_approved}
+                onToggle={() => togglePref('document_approved')}
+              />
+              <PrefToggle
+                label="Document Rejected"
+                description="When your event registration document needs updating"
+                enabled={notifPrefs.document_rejected}
+                onToggle={() => togglePref('document_rejected')}
+              />
+              <PrefToggle
+                label="Answer Approved"
+                description="When your registration answer is approved"
+                enabled={notifPrefs.answer_approved}
+                onToggle={() => togglePref('answer_approved')}
+              />
+              <PrefToggle
+                label="Answer Rejected"
+                description="When your registration answer needs updating"
+                enabled={notifPrefs.answer_rejected}
+                onToggle={() => togglePref('answer_rejected')}
+              />
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={saveNotifPrefs}
+                disabled={prefsSaving}
+                className="btn-primary px-6 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
+              >
+                {prefsSaving ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Saving...
+                  </>
+                ) : (
+                  'Save Preferences'
+                )}
+              </button>
+            </div>
+          </div>
+
           {/* Logout button */}
           <div className="glass rounded-3xl p-6 opacity-0 animate-fade-in-up animate-fill-both animate-delay-300">
             <button
@@ -531,5 +653,39 @@ export default function ProfilePage() {
 
       <Chatbot />
     </>
+  );
+}
+
+// ─── Notification Toggle Component ───
+function PrefToggle({
+  label,
+  description,
+  enabled,
+  onToggle,
+}: {
+  label: string;
+  description: string;
+  enabled: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between py-3 border-b border-white/5 last:border-0">
+      <div className="flex-1 min-w-0 mr-4">
+        <p className="text-sm font-medium text-slate-200">{label}</p>
+        <p className="text-xs text-slate-500 mt-0.5">{description}</p>
+      </div>
+      <button
+        onClick={onToggle}
+        className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-colors duration-200 ${
+          enabled ? 'bg-amber-500' : 'bg-slate-700'
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+            enabled ? 'translate-x-5' : 'translate-x-0'
+          }`}
+        />
+      </button>
+    </div>
   );
 }

@@ -4,7 +4,7 @@ import path from 'path';
 import bcryptjs from 'bcryptjs';
 import { query } from '../db';
 import { authMiddleware, adminMiddleware, AuthRequest } from '../middleware/auth';
-import { sendEmail, applicationApprovedEmail, applicationRejectedEmail } from '../email';
+import { sendEmail, applicationSubmittedEmail, applicationApprovedEmail, applicationRejectedEmail } from '../email';
 
 // ─── File Upload Setup ───
 const storage = multer.diskStorage({
@@ -141,6 +141,18 @@ userApplicationsRouter.post(
           additionalDocFile,
         ]
       );
+
+      // Send application submitted confirmation email (non-blocking)
+      const applicant = await query('SELECT name, email FROM users WHERE id = $1', [req.userId]);
+      if (applicant.rows.length > 0) {
+        const emailContent = applicationSubmittedEmail(
+          applicant.rows[0].name,
+          community_name
+        );
+        sendEmail(applicant.rows[0].email, emailContent.subject, emailContent.html).catch((err) =>
+          console.error('Failed to send application submitted email:', err)
+        );
+      }
 
       res.status(201).json(result.rows[0]);
     } catch (error) {

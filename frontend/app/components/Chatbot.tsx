@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { apiFetch } from '../lib/auth';
 import { quickPrompts } from '../lib/chatConfig';
+import { useAuth } from '../lib/AuthContext';
 import RichMessage from './RichMessage';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -30,24 +31,106 @@ interface ChatResponse {
   error?: string;
 }
 
+// ─── localStorage Helpers ────────────────────────────────────────────────────
+// ── Chat history TTL (time-to-live) ────────────────────────────────────────
+// Change this value to control how long chat history persists across pages.
+// Examples:
+//   30  * 60 * 1000  = 30 minutes
+//    1  * 60 * 60 * 1000  = 1 hour
+//    6  * 60 * 60 * 1000  = 6 hours
+//   12  * 60 * 60 * 1000  = 12 hours
+//   24  * 60 * 60 * 1000  = 1 day  (default)
+//    3  * 24 * 60 * 60 * 1000  = 3 days
+//    7  * 24 * 60 * 60 * 1000  = 7 days
+const CHAT_HISTORY_TTL_MS = 24 * 60 * 60 * 1000; // default: 1 day
+
+/** Returns per-user (or guest) localStorage keys. */
+function getStorageKeys(userId: number | string | null) {
+  const suffix = userId ? `_${userId}` : '_guest';
+  return {
+    messages: `smart_connects_chat_history${suffix}`,
+    expiry: `smart_connects_chat_expiry${suffix}`,
+  };
+}
+
+const WELCOME_MESSAGE: Message = {
+  id: 'welcome',
+  role: 'bot',
+  content:
+    "Hi! 👋 I'm your **Smart Connects** assistant. I can help you find communities, browse events, and even **generate event descriptions** when you're creating a new event. Try one of the suggestions below or type your question.",
+  timestamp: new Date(),
+};
+
+/** Load persisted chat messages from localStorage (returns null if expired or missing). */
+function loadPersistedMessages(userId: number | string | null): Message[] | null {
+  const keys = getStorageKeys(userId);
+  try {
+    const expiry = localStorage.getItem(keys.expiry);
+    if (!expiry) return null;
+    if (Date.now() > Number(expiry)) {
+      // Expired — clear stale data
+      localStorage.removeItem(keys.messages);
+      localStorage.removeItem(keys.expiry);
+      return null;
+    }
+    const raw = localStorage.getItem(keys.messages);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Message[];
+    // Rehydrate timestamps (stored as ISO strings)
+    return parsed.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }));
+  } catch {
+    return null;
+  }
+}
+
+/** Save chat messages to localStorage with the configured TTL. */
+function persistMessages(msgs: Message[], userId: number | string | null) {
+  const keys = getStorageKeys(userId);
+  try {
+    localStorage.setItem(keys.messages, JSON.stringify(msgs));
+    localStorage.setItem(keys.expiry, String(Date.now() + CHAT_HISTORY_TTL_MS));
+  } catch { /* quota exceeded or SSR — silently ignore */ }
+}
+
+/** Clear persisted chat from localStorage. */
+function clearPersistedMessages(userId: number | string | null) {
+  const keys = getStorageKeys(userId);
+  try {
+    localStorage.removeItem(keys.messages);
+    localStorage.removeItem(keys.expiry);
+  } catch { /* ignore */ }
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export default function Chatbot() {
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'welcome',
-      role: 'bot',
-      content:
-        "Hi! 👋 I'm your **Smart Connects** assistant. I can help you find communities, browse events, get stats, and more! Try one of the suggestions below or type your question.",
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
+  const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // ─── Hydrate messages from localStorage on mount / user change ──────
+  useEffect(() => {
+    const persisted = loadPersistedMessages(userId);
+    if (persisted && persisted.length > 0) {
+      setMessages(persisted);
+    }
+    setHydrated(true);
+  }, [userId]);
+
+  // ─── Persist messages to localStorage whenever they change ───────────
+  useEffect(() => {
+    if (hydrated) {
+      persistMessages(messages, userId);
+    }
+  }, [messages, hydrated, userId]);
 
   // Auto-scroll
   useEffect(() => {
@@ -172,15 +255,8 @@ export default function Chatbot() {
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => {
-                    setMessages([
-                      {
-                        id: 'welcome-' + Date.now(),
-                        role: 'bot',
-                        content:
-                          "Hi! 👋 I'm your **Smart Connects** assistant. I can help you find communities, browse events, get stats, and more! Try one of the suggestions below or type your question.",
-                        timestamp: new Date(),
-                      },
-                    ]);
+                    clearPersistedMessages(userId);
+                    setMessages([{ ...WELCOME_MESSAGE, id: 'welcome-' + Date.now() }]);
                     setShowSuggestions(true);
                   }}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all"

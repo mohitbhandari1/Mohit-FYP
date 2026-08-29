@@ -44,9 +44,11 @@ const SEATS_REMAINING = `CASE WHEN e.max_attendees IS NULL THEN NULL ELSE GREATE
 
 interface EventQuestion {
   question: string;
-  type: 'text' | 'textarea' | 'select' | 'file' | 'image';
+  type: 'text' | 'textarea' | 'select' | 'checkboxes' | 'radio' | 'date' | 'number' | 'file';
   required: boolean;
   options: string[];
+  file_accept?: string;
+  file_max_size?: number;
   sort_order: number;
 }
 
@@ -66,9 +68,11 @@ function parseQuestions(raw: any): EventQuestion[] {
     .filter((q) => q && typeof q.question === 'string' && q.question.trim())
     .map((q, i) => ({
       question: q.question.trim(),
-      type: ['text', 'textarea', 'select', 'file', 'image'].includes(q.type) ? q.type : 'text',
+      type: ['text', 'textarea', 'select', 'checkboxes', 'radio', 'date', 'number', 'file'].includes(q.type) ? q.type : 'text',
       required: !!q.required,
       options: Array.isArray(q.options) ? q.options.map(String).filter(Boolean) : [],
+      file_accept: q.file_accept || 'both',
+      file_max_size: q.file_max_size || 5,
       sort_order: i,
     }));
 }
@@ -79,9 +83,9 @@ async function replaceEventQuestions(eventId: number, rawQuestions: any): Promis
   await query('DELETE FROM event_questions WHERE event_id = $1', [eventId]);
   for (const q of questions) {
     await query(
-      `INSERT INTO event_questions (event_id, question, type, required, options, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [eventId, q.question, q.type, q.required, q.options.length > 0 ? JSON.stringify(q.options) : null, q.sort_order]
+      `INSERT INTO event_questions (event_id, question, type, required, options, sort_order, file_accept, file_max_size)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [eventId, q.question, q.type, q.required, q.options.length > 0 ? JSON.stringify(q.options) : null, q.sort_order, q.file_accept || 'both', q.file_max_size || 5]
     );
   }
 }
@@ -97,6 +101,8 @@ async function getEventQuestions(eventId: number) {
     question: r.question,
     type: r.type,
     required: r.required,
+    file_accept: r.file_accept || 'both',
+    file_max_size: r.file_max_size || 5,
     options: typeof r.options === 'string' ? JSON.parse(r.options) : r.options || [],
   }));
 }
@@ -384,6 +390,34 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
       [req.userId, user.rows[0]?.name || '', 'event_created', `Created event: ${title} in community #${community_id}`]
     );
 
+    // ─── Notify all community members about the new event ───
+    const communityNameRes = await query('SELECT name, logo FROM communities WHERE id = $1', [community_id]);
+    const communityName = communityNameRes.rows[0]?.name || 'Community';
+    const communityLogo = communityNameRes.rows[0]?.logo || null;
+    const eventDateFormatted = new Date(event_date).toLocaleDateString('en-US', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    });
+
+    // Get all community members (except the creator)
+    const members = await query(
+      'SELECT user_id FROM community_members WHERE community_id = $1 AND user_id != $2',
+      [community_id, req.userId]
+    );
+
+    // Create notifications (respects user preferences)
+    if (members.rows.length > 0) {
+      const { createNotificationsForUsers } = await import('../notificationHelper');
+      const memberIds = members.rows.map((m: any) => m.user_id);
+      createNotificationsForUsers(
+        memberIds,
+        'new_event',
+        `New Event in ${communityName}`,
+        `${title} on ${eventDateFormatted}${location ? ` at ${location}` : ''}`,
+        `/events/${result.rows[0].id}`,
+        communityLogo
+      ).catch((err) => console.error('Failed to create event notifications:', err));
+    }
+
     const created = result.rows[0];
     created.questions = await getEventQuestions(created.id);
     created.seats_remaining = created.max_attendees != null
@@ -572,7 +606,7 @@ router.get('/:id/export', authMiddleware, async (req: AuthRequest, res, next) =>
     }
 
     const questions = await query(
-      'SELECT id, question FROM event_questions WHERE event_id = $1 ORDER BY sort_order ASC, id ASC',
+      'SELECT id, question, type FROM event_questions WHERE event_id = $1 ORDER BY sort_order ASC, id ASC',
       [eventId]
     );
     const rsvpRes = await query(
@@ -584,6 +618,22 @@ router.get('/:id/export', authMiddleware, async (req: AuthRequest, res, next) =>
        ORDER BY r.created_at ASC`,
       [eventId]
     );
+
+    // Build the base URL so file paths become clickable hyperlinks
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+    /** Convert a raw /uploads/... path to a full URL. */
+    const toFullUrl = (p: string) => (p && p.startsWith('/uploads/') ? `${baseUrl}${p}` : '');
+
+    /** Extract a human-readable filename from a path. */
+    const displayName = (filePath: string) => filePath.split('/').pop() || filePath;
+
+    /** Create an XLSX hyperlink cell: display text + clickable link. */
+    const linkCell = (url: string, text: string) => ({
+      t: 's' as const,
+      v: text,
+      l: { Target: url, Tooltip: `Open ${text}` },
+    });
 
     const header = ['Name', 'Email', 'Phone', 'Status', 'RSVP Date', 'Verification Document', 'Document Status', ...questions.rows.map((q: any) => q.question)];
     const rows = rsvpRes.rows.map((r: any) => {
@@ -601,6 +651,36 @@ router.get('/:id/export', authMiddleware, async (req: AuthRequest, res, next) =>
     });
 
     const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+
+    // ── Post-process: turn raw /uploads/… paths into clickable hyperlinks ──
+    // Column indices 5 = "Verification Document"
+    const DOC_COL = 5;
+    for (let ri = 0; ri < rows.length; ri++) {
+      const cellRef = XLSX.utils.encode_cell({ r: ri + 1, c: DOC_COL });
+      const raw = rows[ri][DOC_COL];
+      if (typeof raw === 'string' && raw.startsWith('/uploads/')) {
+        const url = toFullUrl(raw);
+        ws[cellRef] = linkCell(url, rsvpRes.rows[ri].document_name || displayName(raw));
+      }
+    }
+
+    // Custom-question columns start at index 7. File-type question answers
+    // store the path as the value and the original filename under <qid>_name.
+    const FILE_TYPES = new Set(['file', 'image']);
+    questions.rows.forEach((q: any, qi: number) => {
+      if (!FILE_TYPES.has(q.type)) return;
+      const col = 7 + qi;
+      rsvpRes.rows.forEach((r: any, ri: number) => {
+        const cellRef = XLSX.utils.encode_cell({ r: ri + 1, c: col });
+        const raw = (r.answers || {})[String(q.id)];
+        if (typeof raw === 'string' && raw.startsWith('/uploads/')) {
+          const url = toFullUrl(raw);
+          const name = (r.answers || {})[String(q.id) + '_name'] || displayName(raw);
+          ws[cellRef] = linkCell(url, name);
+        }
+      });
+    });
+
     ws['!cols'] = header.map((h) => ({ wch: Math.max(h.length + 2, 14) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Attendees');

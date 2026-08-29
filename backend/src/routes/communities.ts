@@ -5,6 +5,7 @@ import fs from 'fs';
 import * as XLSX from 'xlsx';
 import { query } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
+import { sendEmail, membershipApprovedEmail, membershipRejectedEmail, membershipSubmittedEmail } from '../email';
 
 const router = express.Router();
 
@@ -251,7 +252,7 @@ router.put('/:id', authMiddleware, uploadCommunityImages.fields([
   const {
     name, description, category, website, location,
     facebook, instagram, linkedin, tiktok,
-    is_private, member_approval
+    is_private, member_approval, membership_open
   } = req.body;
 
   try {
@@ -287,12 +288,14 @@ router.put('/:id', authMiddleware, uploadCommunityImages.fields([
         banner_image = COALESCE($6, banner_image), logo = COALESCE($7, logo),
         facebook = COALESCE($8, facebook), instagram = COALESCE($9, instagram),
         linkedin = COALESCE($10, linkedin), tiktok = COALESCE($11, tiktok),
-        is_private = COALESCE($12, is_private), member_approval = COALESCE($13, member_approval)
-       WHERE id = $14 RETURNING *`,
+        is_private = COALESCE($12, is_private), member_approval = COALESCE($13, member_approval),
+        membership_open = COALESCE($14, membership_open),
+        membership_form_url = COALESCE($15, membership_form_url)
+       WHERE id = $16 RETURNING *`,
       [name || null, description || null, category || null, website || null,
        location || null, banner_image || null, logo || null,
        facebook || null, instagram || null, linkedin || null, tiktok || null,
-       is_private ?? null, member_approval ?? null, communityId]
+       is_private ?? null, member_approval ?? null, membership_open ?? null, membership_form_url || null, communityId]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -365,7 +368,7 @@ router.get('/:id/events', async (req, res, next) => {
   try {
     let sql = `SELECT e.*, c.name as community_name
                FROM events e JOIN communities c ON e.community_id = c.id
-               WHERE e.community_id = $1`;
+               WHERE e.community_id = $1 AND e.deleted_at IS NULL`;
     if (type === 'upcoming') sql += ' AND e.event_date >= NOW() ORDER BY e.event_date ASC';
     else if (type === 'past') sql += ' AND e.event_date < NOW() ORDER BY e.event_date DESC';
     else sql += ' ORDER BY e.event_date DESC';
@@ -591,6 +594,152 @@ router.get('/:id/export', authMiddleware, async (req: AuthRequest, res, next) =>
   } catch (error) {
     next(error);
   }
+});
+
+// ─── Membership Toggle (organizer/admin) ───
+router.patch('/:id/membership-toggle', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const community = await query('SELECT owner_id FROM communities WHERE id = $1', [req.params.id]);
+    if (!community.rows.length) { res.status(404).json({ error: 'Community not found' }); return; }
+    if (community.rows[0].owner_id !== userId && req.user?.role !== 'admin') {
+      res.status(403).json({ error: 'Not authorized' }); return;
+    }
+    const { membership_open } = req.body;
+    const result = await query(
+      'UPDATE communities SET membership_open = $1 WHERE id = $2 RETURNING id, membership_open',
+      [membership_open, req.params.id]
+    );
+    res.json(result.rows[0]);
+  } catch (error) { next(error); }
+});
+
+// ─── Membership Applications ───
+
+// GET /api/communities/:id/membership-application — Get current user's application
+router.get('/:id/membership-application', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) { res.status(401).json({ error: 'Not authenticated' }); return; }
+    const result = await query(
+      'SELECT * FROM membership_applications WHERE user_id = $1 AND community_id = $2',
+      [userId, req.params.id]
+    );
+    res.json(result.rows[0] || null);
+  } catch (error) { next(error); }
+});
+
+// POST /api/communities/:id/membership-application — Submit application
+router.post('/:id/membership-application', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) { res.status(401).json({ error: 'Not authenticated' }); return; }
+    const { full_name, email, phone, organization_name, position, reason, experience, availability, additional_info } = req.body;
+    if (!full_name || !email || !reason) {
+      res.status(400).json({ error: 'Full name, email, and reason are required' });
+      return;
+    }
+    // Check if already applied
+    const existing = await query(
+      'SELECT id, status FROM membership_applications WHERE user_id = $1 AND community_id = $2',
+      [userId, req.params.id]
+    );
+    if (existing.rows.length > 0 && existing.rows[0].status !== 'rejected') {
+      res.status(400).json({ error: 'You have already applied. Status: ' + existing.rows[0].status });
+      return;
+    }
+    // If rejected, update instead of insert
+    if (existing.rows.length > 0) {
+      const result = await query(
+        `UPDATE membership_applications SET full_name=$1, email=$2, phone=$3, organization_name=$4, position=$5,
+         reason=$6, experience=$7, availability=$8, additional_info=$9, status='pending',
+         admin_notes=NULL, reviewed_at=NULL, reviewed_by=NULL, created_at=NOW()
+         WHERE user_id=$10 AND community_id=$11 RETURNING *`,
+        [full_name, email, phone, organization_name, position, reason, experience, availability, additional_info, userId, req.params.id]
+      );
+      res.status(201).json(result.rows[0]);
+      return;
+    }
+    const result = await query(
+      `INSERT INTO membership_applications (user_id, community_id, full_name, email, phone, organization_name, position, reason, experience, availability, additional_info)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [userId, req.params.id, full_name, email, phone, organization_name, position, reason, experience, availability, additional_info]
+    );
+
+    // Send submission confirmation email
+    try {
+      const commRes = await query('SELECT name FROM communities WHERE id = $1', [req.params.id]);
+      const userRes = await query('SELECT name FROM users WHERE id = $1', [userId]);
+      if (commRes.rows.length && userRes.rows.length) {
+        const communityName = commRes.rows[0].name;
+        const userName = userRes.rows[0].name;
+        sendEmail(email, ...Object.values(membershipSubmittedEmail(userName, communityName)));
+      }
+    } catch (emailErr) { console.error('[Email] Failed to send membership submission email:', emailErr); }
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) { next(error); }
+});
+
+// GET /api/communities/:id/membership-applications — Get all applications (admin/owner only)
+router.get('/:id/membership-applications', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const community = await query('SELECT owner_id FROM communities WHERE id = $1', [req.params.id]);
+    if (!community.rows.length) { res.status(404).json({ error: 'Community not found' }); return; }
+    if (community.rows[0].owner_id !== userId && req.user?.role !== 'admin') {
+      res.status(403).json({ error: 'Not authorized' }); return;
+    }
+    const result = await query(
+      `SELECT ma.*, u.name as user_name, u.avatar_url
+       FROM membership_applications ma
+       JOIN users u ON ma.user_id = u.id
+       WHERE ma.community_id = $1
+       ORDER BY ma.created_at DESC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (error) { next(error); }
+});
+
+// PATCH /api/communities/:id/membership-applications/:appId — Review application (admin/owner)
+router.patch('/:id/membership-applications/:appId', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const community = await query('SELECT owner_id FROM communities WHERE id = $1', [req.params.id]);
+    if (!community.rows.length) { res.status(404).json({ error: 'Community not found' }); return; }
+    if (community.rows[0].owner_id !== userId && req.user?.role !== 'admin') {
+      res.status(403).json({ error: 'Not authorized' }); return;
+    }
+    const { status, admin_notes } = req.body;
+    if (!['approved', 'rejected', 'pending'].includes(status)) {
+      res.status(400).json({ error: 'Invalid status' }); return;
+    }
+    const result = await query(
+      `UPDATE membership_applications SET status=$1, admin_notes=$2, reviewed_at=NOW(), reviewed_by=$3
+       WHERE id=$4 AND community_id=$5 RETURNING *`,
+      [status, admin_notes, userId, req.params.appId, req.params.id]
+    );
+    if (!result.rows.length) { res.status(404).json({ error: 'Application not found' }); return; }
+
+    // Send email notification to applicant
+    try {
+      const userRes = await query('SELECT name, email FROM users WHERE id = $1', [result.rows[0].user_id]);
+      const commRes = await query('SELECT name FROM communities WHERE id = $1', [req.params.id]);
+      if (userRes.rows.length && commRes.rows.length) {
+        const userName = userRes.rows[0].name;
+        const userEmail = userRes.rows[0].email;
+        const communityName = commRes.rows[0].name;
+        if (status === 'approved') {
+          sendEmail(userEmail, ...Object.values(membershipApprovedEmail(userName, communityName)));
+        } else if (status === 'rejected') {
+          sendEmail(userEmail, ...Object.values(membershipRejectedEmail(userName, communityName, admin_notes)));
+        }
+      }
+    } catch (emailErr) { console.error('[Email] Failed to send membership review email:', emailErr); }
+
+    res.json(result.rows[0]);
+  } catch (error) { next(error); }
 });
 
 export default router;

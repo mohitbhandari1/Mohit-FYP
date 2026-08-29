@@ -11,9 +11,10 @@ export const quickPrompts: string[] = [
   'Upcoming events',
   'Events this week',
   'Events this month',
-  'Find communities by category',
-  'Most popular communities',
+  'Help me create an event',
+  'Write a description for my event',
   'Most popular events',
+  'Find communities by category',
 ];
 
 /** Legacy alias (same as quickPrompts). */

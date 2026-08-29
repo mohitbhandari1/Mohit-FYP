@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS communities (
   is_verified BOOLEAN DEFAULT FALSE,
   is_private BOOLEAN DEFAULT FALSE,
   member_approval BOOLEAN DEFAULT FALSE,
+  membership_open BOOLEAN DEFAULT FALSE,
+  membership_form_url VARCHAR(500),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -102,6 +104,8 @@ CREATE TABLE IF NOT EXISTS event_questions (
   type VARCHAR(20) NOT NULL DEFAULT 'text',
   required BOOLEAN NOT NULL DEFAULT FALSE,
   options JSONB,
+  file_accept VARCHAR(20) DEFAULT 'both',
+  file_max_size INTEGER DEFAULT 5,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -230,4 +234,26 @@ CREATE TABLE IF NOT EXISTS community_sponsors (
   website VARCHAR(255),
   logo VARCHAR(500),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ─── Membership Applications ───
+CREATE TABLE IF NOT EXISTS membership_applications (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  community_id INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  full_name VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NOT NULL,
+  phone VARCHAR(100),
+  organization_name VARCHAR(255),
+  position VARCHAR(255),
+  reason TEXT NOT NULL,
+  experience TEXT,
+  availability VARCHAR(100),
+  additional_info TEXT,
+  status VARCHAR(50) NOT NULL DEFAULT 'pending',
+  admin_notes TEXT,
+  reviewed_at TIMESTAMP WITH TIME ZONE,
+  reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(user_id, community_id)
 );

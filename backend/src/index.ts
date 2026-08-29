@@ -16,6 +16,9 @@ import { userApplicationsRouter, adminApplicationsRouter } from './routes/applic
 import announcementsRouter from './routes/announcements';
 import discussionsRouter from './routes/discussions';
 import adminActivityRouter from './routes/adminActivity';
+import notificationsRouter from './routes/notifications';
+import notificationPreferencesRouter from './routes/notificationPreferences';
+import { startReminderService, triggerReminderCheck } from './reminderService';
 
 dotenv.config();
 
@@ -56,6 +59,18 @@ app.use('/api/admin/applications', adminApplicationsRouter);
 app.use('/api/announcements', announcementsRouter);
 app.use('/api/discussions', discussionsRouter);
 app.use('/api/admin', adminActivityRouter);
+app.use('/api/notifications', notificationsRouter);
+app.use('/api/notification-preferences', notificationPreferencesRouter);
+
+// POST /api/admin/send-event-reminders - Manual trigger for testing reminders
+app.post('/api/admin/send-event-reminders', async (req, res) => {
+  try {
+    await triggerReminderCheck();
+    res.json({ message: 'Reminder check triggered' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to trigger reminders' });
+  }
+});
 
 // GET /api/stats - Public platform stats (no auth required)
 app.get('/api/stats', async (_req, res) => {
@@ -99,6 +114,8 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 app.listen(PORT, () => {
   console.log(`Backend server running at http://localhost:${PORT}`);
+  // Start the event reminder service
+  startReminderService();
 });
 
 export default app;

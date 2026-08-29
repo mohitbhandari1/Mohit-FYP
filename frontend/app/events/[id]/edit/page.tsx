@@ -16,11 +16,21 @@ const TOPIC_OPTIONS = [
   'Literature', 'Dance', 'Theater', 'Film', 'Fashion'
 ];
 
-// Scrollable age-limit options for the optional Age Limit question.
-const AGE_LIMIT_OPTIONS = [
-  'All Ages', '12+', '13+', '14+', '15+', '16+', '17+', '18+', '19+', '20+',
-  '21+', '22+', '23+', '24+', '25+', '26+', '27+', '28+', '29+', '30+',
-  '35+', '40+', '45+', '50+', '55+', '60+'
+const QUESTION_TYPES = [
+  { value: 'text', label: 'Short answer' },
+  { value: 'textarea', label: 'Long answer' },
+  { value: 'checkboxes', label: 'Checkboxes' },
+  { value: 'radio', label: 'Multiple choice' },
+  { value: 'select', label: 'Dropdown' },
+  { value: 'date', label: 'Date' },
+  { value: 'number', label: 'Number' },
+  { value: 'file', label: 'File upload' },
+];
+
+const FILE_ACCEPT_PRESETS = [
+  { value: 'images', label: 'Images (JPG, PNG)' },
+  { value: 'documents', label: 'Documents (PDF, DOC)' },
+  { value: 'both', label: 'Both' },
 ];
 
 export default function EditEventPage() {
@@ -37,8 +47,15 @@ export default function EditEventPage() {
     topics: [] as string[], topicInput: '',
     hosts: [{ name: '', role: '' }],
     speakers: '', agenda: '', requirements: '', instructions: '',
-    age_limit: '', requires_documents: false, document_instructions: '',
-    questions: [{ question: '', type: 'text', required: false, options: '' }],
+    age_limit: '',
+    questions: [
+      {
+        question: '', type: 'text', required: false,
+        options: '',
+        file_accept: 'both' as string,
+        file_max_size: 5,
+      },
+    ],
   });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -90,16 +107,16 @@ export default function EditEventPage() {
           requirements: data.requirements || '',
           instructions: data.instructions || '',
           age_limit: data.age_limit || '',
-          requires_documents: !!data.requires_documents,
-          document_instructions: data.document_instructions || '',
           questions: Array.isArray(data.questions) && data.questions.length > 0
             ? data.questions.map((q: any) => ({
                 question: q.question || '',
                 type: q.type || 'text',
                 required: !!q.required,
                 options: Array.isArray(q.options) ? q.options.join(', ') : '',
+                file_accept: q.file_accept || 'both',
+                file_max_size: q.file_max_size || 5,
               }))
-            : [{ question: '', type: 'text', required: false, options: '' }],
+            : [{ question: '', type: 'text', required: false, options: '', file_accept: 'both', file_max_size: 5 }],
         });
       } catch (err) { setError('Failed to load event'); }
       finally { setLoading(false); }
@@ -136,7 +153,10 @@ export default function EditEventPage() {
   const addQuestion = () => {
     setFormData((prev) => ({
       ...prev,
-      questions: [...prev.questions, { question: '', type: 'text', required: false, options: '' }],
+      questions: [
+        ...prev.questions,
+        { question: '', type: 'text', required: false, options: '', file_accept: 'both', file_max_size: 5 },
+      ],
     }));
   };
 
@@ -176,20 +196,27 @@ export default function EditEventPage() {
       if (formData.hosts.length > 0 && formData.hosts[0].name) payload.append('hosts', JSON.stringify(formData.hosts));
       if (bannerFile) payload.append('banner_image', bannerFile);
       if (formData.age_limit) payload.append('age_limit', formData.age_limit);
-      payload.append('requires_documents', String(formData.requires_documents));
-      if (formData.document_instructions) payload.append('document_instructions', formData.document_instructions);
 
-      // Custom registration questions (seat limit is sent as max_attendees above)
+      // Custom registration questions
+      const needsOptions = ['select', 'checkboxes', 'radio'];
+      const needsFileSettings = ['file'];
       const validQuestions = formData.questions
         .filter((q) => q.question.trim())
-        .map((q) => ({
-          question: q.question.trim(),
-          type: q.type,
-          required: q.required,
-          options: q.type === 'select'
-            ? q.options.split(',').map((s) => s.trim()).filter(Boolean)
-            : [],
-        }));
+        .map((q) => {
+          const base: Record<string, any> = {
+            question: q.question.trim(),
+            type: q.type,
+            required: q.required,
+            options: needsOptions.includes(q.type)
+              ? q.options.split(',').map((s: string) => s.trim()).filter(Boolean)
+              : [],
+          };
+          if (needsFileSettings.includes(q.type)) {
+            base.file_accept = q.file_accept || 'both';
+            base.file_max_size = q.file_max_size || 5;
+          }
+          return base;
+        });
       // Always send (even empty) so the organizer can also clear all questions
       payload.append('questions', JSON.stringify(validQuestions));
 
@@ -351,101 +378,151 @@ export default function EditEventPage() {
                 </div>
               </div>
 
-              {/* Age Limit & Document Verification */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className={labelClass}>
-                    Age Limit <span className="text-xs font-normal text-slate-500">(optional)</span>
-                  </label>
-                  <select name="age_limit" value={formData.age_limit} onChange={handleChange} className={inputClass}>
-                    <option value="" className="bg-slate-900">No age limit</option>
-                    {AGE_LIMIT_OPTIONS.map((age) => (
-                      <option key={age} value={age} className="bg-slate-900">{age}</option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-xs text-slate-500">Scroll to pick — leave as “No age limit” if the event is open to everyone.</p>
-                </div>
-                <div className="flex items-end pb-1">
-                  <label className="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer">
-                    <input type="checkbox" checked={formData.requires_documents}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, requires_documents: e.target.checked }))}
-                      className="w-4 h-4 rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/20" />
-                    Attendees must upload a document for verification
-                  </label>
-                </div>
+              {/* Age Limit */}
+              <div>
+                <label className={labelClass}>
+                  Age Limit <span className="text-xs font-normal text-slate-500">(Optional)</span>
+                </label>
+                <input
+                  type="text"
+                  name="age_limit"
+                  value={formData.age_limit}
+                  onChange={handleChange}
+                  placeholder="e.g., 12-18"
+                  className={inputClass}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Enter age range or leave blank. Examples: 12-18, 18+, Under 18, All Ages.
+                </p>
               </div>
 
-              {/* Document Verification Instructions */}
-              {formData.requires_documents && (
-                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-                  <label className={labelClass}>Instructions for attendees</label>
-                  <textarea name="document_instructions" value={formData.document_instructions} onChange={handleChange}
-                    placeholder="e.g., Upload your government-issued ID or student ID so we can verify your age/eligibility..."
-                    rows={2} className={`${inputClass} resize-none`} />
-                  <p className="mt-1.5 text-xs text-slate-500">
-                    Attendees will upload this file when confirming attendance. Accepted: PDF, DOC, DOCX, JPG, PNG (max 10 MB).
-                  </p>
-                </div>
-              )}
-
-              {/* Custom Registration Questions */}
+              {/* Custom Registration Questions — Google Forms style */}
               <div>
                 <label className={labelClass}>Registration Questions</label>
                 <p className="text-xs text-slate-500 mb-3">
                   Ask attendees to answer these before joining. Leave blank if not needed.
                 </p>
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {formData.questions.map((q, index) => (
                     <div key={index} className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
-                      <div className="flex items-start gap-2">
+                      {/* Question header */}
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center justify-center w-7 h-7 rounded-full bg-amber-500/10 text-amber-400 text-xs font-bold shrink-0">
+                          {index + 1}
+                        </span>
                         <div className="flex-1">
-                          <label className="block text-xs font-medium text-slate-400 mb-1">Question {index + 1} *</label>
                           <input type="text" value={q.question}
                             onChange={(e) => updateQuestion(index, 'question', e.target.value)}
-                            placeholder="e.g., How did you hear about this event?"
-                            className={inputClass} />
+                            placeholder="Question"
+                            className="w-full bg-transparent border-b border-white/10 px-1 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none transition-all" />
                         </div>
                         <button type="button" onClick={() => removeQuestion(index)}
-                          className="mt-5 p-2 rounded-lg text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                          className="p-1.5 rounded-lg text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition-all"
                           title="Remove question">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                           </svg>
                         </button>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs font-medium text-slate-400 mb-1">Answer Type</label>
+
+                      {/* Type + Required row */}
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
                           <select value={q.type} onChange={(e) => updateQuestion(index, 'type', e.target.value)}
-                            className={inputClass}>
-                            <option value="text" className="bg-slate-900">Short text</option>
-                            <option value="textarea" className="bg-slate-900">Long text</option>
-                            <option value="select" className="bg-slate-900">Multiple choice</option>
-                            <option value="file" className="bg-slate-900">File upload</option>
-                            <option value="image" className="bg-slate-900">Image upload</option>
+                            className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-200 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 transition-all">
+                            {QUESTION_TYPES.map((qt) => (
+                              <option key={qt.value} value={qt.value} className="bg-slate-900">{qt.label}</option>
+                            ))}
                           </select>
                         </div>
-                        <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer pt-5">
+                        <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer whitespace-nowrap">
                           <input type="checkbox" checked={q.required}
                             onChange={(e) => updateQuestion(index, 'required', e.target.checked)}
                             className="w-4 h-4 rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/20" />
-                          Required to answer
+                          Required
                         </label>
                       </div>
-                      {q.type === 'select' && (
-                        <div>
-                          <label className="block text-xs font-medium text-slate-400 mb-1">Options (comma separated)</label>
-                          <input type="text" value={q.options}
-                            onChange={(e) => updateQuestion(index, 'options', e.target.value)}
-                            placeholder="Option A, Option B, Option C"
-                            className={inputClass} />
+
+                      {/* Options editor for radio / select / checkboxes */}
+                      {['select', 'radio', 'checkboxes'].includes(q.type) && (
+                        <div className="space-y-2">
+                          <label className="block text-xs font-medium text-slate-400">Options</label>
+                          <div className="space-y-1.5">
+                            {(() => {
+                              const opts = q.options ? q.options.split(',').map((s: string) => s.trim()).filter(Boolean) : [''];
+                              return opts.map((opt: string, oi: number) => (
+                                <div key={oi} className="flex items-center gap-2">
+                                  <span className="text-slate-500 text-xs w-5 text-center shrink-0">{oi + 1}.</span>
+                                  <input type="text" value={opt}
+                                    placeholder={`Option ${oi + 1}`}
+                                    onChange={(e) => {
+                                      const parts = q.options ? q.options.split(',').map((s: string) => s.trim()) : [];
+                                      parts[oi] = e.target.value;
+                                      while (parts.length <= oi) parts.push('');
+                                      updateQuestion(index, 'options', parts.join(', '));
+                                    }}
+                                    className="flex-1 bg-transparent border-b border-white/10 px-1 py-1 text-sm text-slate-200 placeholder-slate-600 focus:border-amber-500/50 focus:outline-none transition-all" />
+                                  {opts.length > 1 && (
+                                    <button type="button" onClick={() => {
+                                      const parts = q.options ? q.options.split(',').map((s: string) => s.trim()) : [];
+                                      parts.splice(oi, 1);
+                                      updateQuestion(index, 'options', parts.join(', '));
+                                    }} className="text-slate-500 hover:text-red-400 text-xs">✕</button>
+                                  )}
+                                </div>
+                              ));
+                            })()}
+                          </div>
+                          <button type="button" onClick={() => {
+                            const parts = q.options ? q.options.split(',').map((s: string) => s.trim()) : [];
+                            parts.push('');
+                            updateQuestion(index, 'options', parts.join(', '));
+                          }} className="text-xs text-amber-400/70 hover:text-amber-400 transition-colors">
+                            + Add option
+                          </button>
+                          <input type="hidden" value={q.options}
+                            onChange={(e) => updateQuestion(index, 'options', e.target.value)} />
                         </div>
                       )}
+
+                      {/* File upload settings */}
                       {q.type === 'file' && (
-                        <p className="text-xs text-slate-500">Attendees will upload a file to answer this question (PDF, DOC, DOCX, JPG, PNG — max 10 MB).</p>
+                        <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3 space-y-2.5">
+                          <label className="block text-xs font-medium text-slate-400">File upload settings</label>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[11px] text-slate-500 mb-1">Allowed types</label>
+                              <select value={q.file_accept || 'both'}
+                                onChange={(e) => updateQuestion(index, 'file_accept', e.target.value)}
+                                className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-slate-200 focus:border-amber-500/50 focus:outline-none transition-all">
+                                {FILE_ACCEPT_PRESETS.map((fp) => (
+                                  <option key={fp.value} value={fp.value} className="bg-slate-900">{fp.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[11px] text-slate-500 mb-1">Max size (MB)</label>
+                              <select value={q.file_max_size || 5}
+                                onChange={(e) => updateQuestion(index, 'file_max_size', Number(e.target.value))}
+                                className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-slate-200 focus:border-amber-500/50 focus:outline-none transition-all">
+                                {[2, 5, 10, 15, 20].map((mb) => (
+                                  <option key={mb} value={mb} className="bg-slate-900">{mb} MB</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-slate-600">
+                            {q.file_accept === 'images' ? 'JPG, PNG' : q.file_accept === 'documents' ? 'PDF, DOC, DOCX' : 'JPG, PNG, PDF, DOC, DOCX'} — max {q.file_max_size || 5} MB
+                          </p>
+                        </div>
                       )}
-                      {q.type === 'image' && (
-                        <p className="text-xs text-slate-500">Attendees will upload an image to answer this question (JPG, PNG, GIF, WEBP — max 10 MB).</p>
+
+                      {/* Preview hint for non-editable types */}
+                      {q.type === 'date' && (
+                        <p className="text-xs text-slate-600 italic">Attendees will pick a date.</p>
+                      )}
+                      {q.type === 'number' && (
+                        <p className="text-xs text-slate-600 italic">Attendees will enter a number.</p>
                       )}
                     </div>
                   ))}
@@ -455,7 +532,7 @@ export default function EditEventPage() {
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
-                  Add Question
+                  + Add Question
                 </button>
               </div>
 

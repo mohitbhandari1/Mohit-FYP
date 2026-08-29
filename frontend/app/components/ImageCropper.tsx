@@ -17,7 +17,7 @@ interface ImageCropperProps {
   currentUrl?: string;
   /** Called with the cropped File (or null when removed). */
   onChange: (file: File | null) => void;
-  /** Max width of the exported image (never upscaled beyond the source). */
+  /** Max width of the exported image. Always exports at this resolution. */
   outputMaxWidth?: number;
   /** Max accepted upload size in MB. */
   maxFileMB?: number;
@@ -228,7 +228,9 @@ export default function ImageCropper({
     const timer = setTimeout(() => {
       const base = coverScale(img, container);
       const scale = base * crop.zoom;
-      const visibleW = container.w / scale; // visible width in source pixels
+      // Always export at the best resolution from the source image, capped at outputMaxWidth.
+      // visibleW = how many source pixels fit in the crop frame width.
+      const visibleW = container.w / scale;
       const outW = Math.max(1, Math.min(outputMaxWidth, Math.round(visibleW)));
       const outH = Math.max(1, Math.round(outW / aspect));
       const canvas = document.createElement('canvas');
@@ -244,7 +246,10 @@ export default function ImageCropper({
       const image = new Image();
       image.onload = () => {
         const s = outW / container.w; // container px → output px
-        ctx.drawImage(image, -crop.x * s, -crop.y * s, img.w * scale * s, img.h * scale * s);
+        // canvas (0,0) must map to the same source pixel as container (0,0)
+        // Source pixel at container (0,0) is (-crop.x/scale, -crop.y/scale)
+        // So dx = crop.x * s, dy = crop.y * s
+        ctx.drawImage(image, crop.x * s, crop.y * s, img.w * scale * s, img.h * scale * s);
         const outType = isJpeg ? 'image/jpeg' : img.type === 'image/webp' ? 'image/webp' : 'image/png';
         canvas.toBlob(
           (blob) => {
@@ -390,16 +395,6 @@ export default function ImageCropper({
           Drag to reposition · Scroll or pinch to zoom
         </span>
       </div>
-
-      {/* Live preview of the final upload */}
-      {previewUrl && (
-        <div className="mt-3">
-          <p className="text-xs font-medium text-slate-400 mb-1.5">Final preview — this is exactly what gets uploaded</p>
-          <div className="rounded-xl overflow-hidden border border-white/10 bg-slate-900/60">
-            <img src={previewUrl} alt="Final crop preview" className="w-full block" />
-          </div>
-        </div>
-      )}
 
       {/* Zoom controls */}
       <div className="mt-2 flex items-center gap-3">

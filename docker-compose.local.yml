@@ -52,6 +52,8 @@ services:
       GEMINI_API_KEY: AQ.Ab8RN6Ig-H-MkmR95UTThVg-xAdj8HgqoL1G5Zb7kSSIKCQKdQ
       RESEND_API_KEY: re_ETcfFL5u_KfijmpxPqmTFMfgiY5fR6aQd
       FROM_EMAIL: onboarding@resend.dev
+      GMAIL_USER: bhandarimohit257@gmail.com
+      GMAIL_APP_PASSWORD: vhmi ujjr lsnz goky
       FRONTEND_URL: http://localhost:3000
     depends_on:
       db:

@@ -43,6 +43,45 @@ export default function EventDetailPage() {
   const [reviewError, setReviewError] = useState('');
   const reviewAttendee = attendees.find((a: any) => a.user_id === reviewUserId) || null;
 
+  /** Detect image files by extension (jpg, jpeg, png, gif, webp). */
+  const isImageFile = (p: string) => /\.(jpe?g|png|gif|webp)$/i.test(p);
+
+  /**
+   * Render a file upload value: inline thumbnail for images, or a
+   * download-link card for non-image files (PDF, DOC, etc.).
+   */
+  const renderFileUpload = (
+    filePath: string,
+    fileName: string | undefined,
+    opts?: { thumbClass?: string; wrapperClass?: string }
+  ) => {
+    const name = fileName || filePath.split('/').pop() || 'uploaded file';
+    const fullUrl = `${BACKEND_URL}${filePath}`;
+    if (isImageFile(filePath)) {
+      return (
+        <a href={fullUrl} target="_blank" rel="noopener noreferrer"
+          className={`group inline-block ${opts?.wrapperClass || ''}`}>
+          <img
+            src={fullUrl}
+            alt={name}
+            className={`rounded-lg object-cover border border-white/10 group-hover:border-amber-500/40 transition-colors ${opts?.thumbClass || 'w-20 h-20'}`}
+          />
+          <p className="text-[11px] text-slate-500 mt-1 truncate max-w-[8rem] group-hover:text-amber-400 transition-colors">{name}</p>
+        </a>
+      );
+    }
+    return (
+      <a href={fullUrl} target="_blank" rel="noopener noreferrer"
+        download={name}
+        className="inline-flex items-center gap-1.5 text-sm text-amber-400 hover:text-amber-300 transition-colors">
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+        </svg>
+        {name}
+      </a>
+    );
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -126,7 +165,7 @@ export default function EventDetailPage() {
       fd.append('answers', JSON.stringify(answers));
       // File/image-type registration questions: append each file with its question id
       (event?.questions || [])
-        .filter((q: any) => q.type === 'file' || q.type === 'image')
+        .filter((q: any) => q.type === 'file')
         .forEach((q: any) => {
           const f = rsvpAnswerFiles[String(q.id)];
           if (f) {
@@ -330,7 +369,14 @@ export default function EventDetailPage() {
                 </svg>
               </div>
               <p className="text-xs text-slate-500 mb-1">Location</p>
-              <p className="text-sm font-medium text-slate-200">{event.location || 'Online'}</p>
+              {event.location ? (
+                <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.location)}`} target="_blank" rel="noopener noreferrer"
+                  className="text-sm font-medium text-amber-400 hover:text-amber-300 transition-colors underline underline-offset-2 decoration-amber-400/30 hover:decoration-amber-300/50">
+                  {event.location}
+                </a>
+              ) : (
+                <p className="text-sm font-medium text-slate-200">Online</p>
+              )}
             </div>
             <div className="rounded-xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-4 text-center">
               <div className="w-10 h-10 mx-auto mb-2 rounded-lg bg-violet-500/10 flex items-center justify-center">
@@ -444,30 +490,25 @@ export default function EventDetailPage() {
                               </span>
                             </span>
                           </div>
-                          {att.phone && <p className="text-xs text-slate-500 mt-1 ml-11">📞 {att.phone}</p>}
-                          {event.questions?.length > 0 && att.answers && (
+                          {att.phone && <p className="text-xs text-slate-500 mt-1 ml-11">📞 {att.phone}</p>}                              {event.questions?.length > 0 && att.answers && (
                             <div className="ml-11 mt-1 space-y-0.5">
                               {event.questions.map((q: any) => {
                                 const val = att.answers[String(q.id)] ?? att.answers[q.question] ?? '';
                                 if (!val) return null;
+                                if (q.type === 'file') {
+                                  return (
+                                    <div key={q.id} className="mt-1.5">
+                                      {renderFileUpload(
+                                        val,
+                                        att.answers[String(q.id) + '_name'],
+                                        { thumbClass: 'w-16 h-16', wrapperClass: 'inline-block' }
+                                      )}
+                                    </div>
+                                  );
+                                }
                                 return (
                                   <p key={q.id} className="text-xs text-slate-400">
-                                    <span className="text-slate-500">{q.question}:</span>{' '}
-                                    {q.type === 'file' ? (
-                                      <a href={`${BACKEND_URL}${val}`} target="_blank" rel="noopener noreferrer"
-                                        download={att.answers[String(q.id) + '_name'] || 'uploaded-file'}
-                                        className="inline-flex items-center gap-1 text-amber-400 hover:text-amber-300 transition-colors">
-                                        📄 {att.answers[String(q.id) + '_name'] || 'View file'}
-                                      </a>
-                                    ) : q.type === 'image' ? (
-                                      <a href={`${BACKEND_URL}${val}`} target="_blank" rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors">
-                                        <img src={`${BACKEND_URL}${val}`}
-                                          alt={att.answers[String(q.id) + '_name'] || 'uploaded image'}
-                                          className="w-8 h-8 rounded-md object-cover border border-white/10" />
-                                        {att.answers[String(q.id) + '_name'] || 'View image'}
-                                      </a>
-                                    ) : val}
+                                    <span className="text-slate-500">{q.question}:</span>{' '}{val}
                                   </p>
                                 );
                               })}
@@ -475,15 +516,27 @@ export default function EventDetailPage() {
                           )}
                           {att.document_url && (
                             <div className="ml-11 mt-1.5 space-y-1.5">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <a href={`${BACKEND_URL}${att.document_url}`} target="_blank" rel="noopener noreferrer"
-                                  download={att.document_name || 'verification-document'}
-                                  className="inline-flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 transition-colors">
-                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-                                  </svg>
-                                  {att.document_name || 'Verification document'}
-                                </a>
+                              <div className="flex items-start gap-2 flex-wrap">
+                                {isImageFile(att.document_url) ? (
+                                  <a href={`${BACKEND_URL}${att.document_url}`} target="_blank" rel="noopener noreferrer"
+                                    className="group inline-block">
+                                    <img
+                                      src={`${BACKEND_URL}${att.document_url}`}
+                                      alt={att.document_name || 'Verification document'}
+                                      className="w-20 h-20 rounded-lg object-cover border border-white/10 group-hover:border-amber-500/40 transition-colors"
+                                    />
+                                    <p className="text-[11px] text-slate-500 mt-1 truncate max-w-[8rem] group-hover:text-amber-400 transition-colors">{att.document_name || 'Verification doc'}</p>
+                                  </a>
+                                ) : (
+                                  <a href={`${BACKEND_URL}${att.document_url}`} target="_blank" rel="noopener noreferrer"
+                                    download={att.document_name || 'verification-document'}
+                                    className="inline-flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 transition-colors">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                                    </svg>
+                                    {att.document_name || 'Verification document'}
+                                  </a>
+                                )}
                                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
                                   att.document_status === 'verified'
                                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
@@ -634,6 +687,32 @@ export default function EventDetailPage() {
 
             {/* Sidebar */}
             <div className="space-y-6">
+              {/* Organizer Card */}
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-5">
+                <p className="text-xs text-slate-500 uppercase tracking-wider mb-3 font-medium">Organized by</p>
+                <Link
+                  href={event.community_id ? `/communities/${event.community_id}` : '#'}
+                  className="flex items-center gap-3 group"
+                >
+                  {event.community_logo ? (
+                    <img src={`${BACKEND_URL}${event.community_logo}`} alt="" className="w-10 h-10 rounded-full object-cover border border-white/10 group-hover:border-amber-500/30 transition-colors" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-white/10 flex items-center justify-center group-hover:border-amber-500/30 transition-colors">
+                      <span className="text-sm font-semibold text-amber-400">{(event.community_name || 'C').charAt(0).toUpperCase()}</span>
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-200 truncate group-hover:text-amber-400 transition-colors">
+                      {event.community_name || 'Community'}
+                    </p>
+                    <p className="text-xs text-slate-500">View community</p>
+                  </div>
+                  <svg className="w-4 h-4 text-slate-500 group-hover:text-amber-400 transition-colors group-hover:translate-x-0.5 transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              </div>
+
               {/* RSVP Card */}
               <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-6 sticky top-24">
                 <h3 className="text-lg font-semibold text-slate-100 mb-4">RSVP</h3>
@@ -801,7 +880,9 @@ export default function EventDetailPage() {
               )}
 
               <div className="space-y-4">
-                {event.questions.map((q: any) => (
+                {event.questions.map((q: any) => {
+                  const fileAcceptHint = q.file_accept === 'images' ? 'Images only' : q.file_accept === 'documents' ? 'Documents only' : 'JPG, PNG, PDF, DOC, DOCX';
+                  return (
                   <div key={q.id}>
                     <label className="block text-sm font-medium text-slate-200 mb-1.5">
                       {q.question}{q.required && <span className="text-red-400 ml-0.5">*</span>}
@@ -814,7 +895,7 @@ export default function EventDetailPage() {
                         className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
                         placeholder="Your answer..."
                       />
-                    ) : q.type === 'select' ? (
+                    ) : q.type === 'select' || q.type === 'dropdown' ? (
                       <select
                         value={rsvpAnswers[String(q.id)] || ''}
                         onChange={(e) => setRsvpAnswers((prev) => ({ ...prev, [String(q.id)]: e.target.value }))}
@@ -825,11 +906,55 @@ export default function EventDetailPage() {
                           <option key={opt} value={opt} className="bg-slate-900">{opt}</option>
                         ))}
                       </select>
+                    ) : q.type === 'radio' ? (
+                      <div className="space-y-2">
+                        {(q.options || []).map((opt: string) => (
+                          <label key={opt} className="flex items-center gap-3 cursor-pointer">
+                            <input type="radio" name={`q_${q.id}`} value={opt}
+                              checked={rsvpAnswers[String(q.id)] === opt}
+                              onChange={(e) => setRsvpAnswers((prev) => ({ ...prev, [String(q.id)]: e.target.value }))}
+                              className="w-4 h-4 border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/20" />
+                            <span className="text-sm text-slate-300">{opt}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : q.type === 'checkboxes' ? (
+                      <div className="space-y-2">
+                        {(q.options || []).map((opt: string) => {
+                          const currentChecks = rsvpAnswers[String(q.id)] ? rsvpAnswers[String(q.id)].split(',').map((s: string) => s.trim()) : [];
+                          return (
+                            <label key={opt} className="flex items-center gap-3 cursor-pointer">
+                              <input type="checkbox" value={opt}
+                                checked={currentChecks.includes(opt)}
+                                onChange={(e) => {
+                                  const prev = rsvpAnswers[String(q.id)] ? rsvpAnswers[String(q.id)].split(',').map((s: string) => s.trim()) : [];
+                                  const next = e.target.checked ? [...prev, opt] : prev.filter((v: string) => v !== opt);
+                                  setRsvpAnswers((p) => ({ ...p, [String(q.id)]: next.join(', ') }));
+                                }}
+                                className="w-4 h-4 rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/20" />
+                              <span className="text-sm text-slate-300">{opt}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : q.type === 'date' ? (
+                      <input type="date"
+                        value={rsvpAnswers[String(q.id)] || ''}
+                        onChange={(e) => setRsvpAnswers((prev) => ({ ...prev, [String(q.id)]: e.target.value }))}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-slate-100 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                      />
+                    ) : q.type === 'number' ? (
+                      <input type="number"
+                        value={rsvpAnswers[String(q.id)] || ''}
+                        onChange={(e) => setRsvpAnswers((prev) => ({ ...prev, [String(q.id)]: e.target.value }))}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        placeholder="Enter a number..."
+                      />
                     ) : q.type === 'file' ? (
                       <div>
                         <input
                           type="file"
-                          accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp"
+                          accept={q.file_accept === 'images' ? 'image/jpeg,image/png' : q.file_accept === 'documents' ? '.pdf,.doc,.docx' : '.pdf,.doc,.docx,.jpg,.jpeg,.png'}
                           onChange={(e) => {
                             setRsvpAnswerFiles((prev) => {
                               const next = { ...prev };
@@ -841,34 +966,9 @@ export default function EventDetailPage() {
                           }}
                           className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer"
                         />
-                        <p className="mt-1 text-xs text-slate-500">PDF, DOC, DOCX, JPG, PNG (max 10 MB)</p>
+                        <p className="mt-1 text-xs text-slate-500">{fileAcceptHint} (max {q.file_max_size || 5} MB)</p>
                         {rsvpAnswerFiles[String(q.id)] && (
                           <p className="mt-1.5 text-xs text-emerald-400 font-medium">✓ {rsvpAnswerFiles[String(q.id)].name}</p>
-                        )}
-                      </div>
-                    ) : q.type === 'image' ? (
-                      <div>
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/gif,image/webp"
-                          onChange={(e) => {
-                            setRsvpAnswerFiles((prev) => {
-                              const next = { ...prev };
-                              if (e.target.files?.[0]) next[String(q.id)] = e.target.files[0];
-                              else delete next[String(q.id)];
-                              return next;
-                            });
-                            if (rsvpError) setRsvpError('');
-                          }}
-                          className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer"
-                        />
-                        <p className="mt-1 text-xs text-slate-500">JPG, PNG, GIF, WEBP (max 10 MB)</p>
-                        {rsvpAnswerFiles[String(q.id)] && (
-                          <div className="mt-2 flex items-center gap-2.5">
-                            <img src={URL.createObjectURL(rsvpAnswerFiles[String(q.id)])} alt="Upload preview"
-                              className="w-14 h-14 rounded-lg object-cover border border-white/10" />
-                            <p className="text-xs text-emerald-400 font-medium">{rsvpAnswerFiles[String(q.id)].name}</p>
-                          </div>
                         )}
                       </div>
                     ) : (
@@ -881,7 +981,8 @@ export default function EventDetailPage() {
                       />
                     )}
                   </div>
-                ))}
+                  );
+                })}
 
                 {/* Verification document upload (required when organizer asked for one) */}
                 {event.requires_documents && (
@@ -917,7 +1018,7 @@ export default function EventDetailPage() {
                       return;
                     }
                     const missingFileAnswer = (event?.questions || [])
-                      .some((q: any) => (q.type === 'file' || q.type === 'image') && q.required && !rsvpAnswerFiles[String(q.id)]);
+                      .some((q: any) => q.type === 'file' && q.required && !rsvpAnswerFiles[String(q.id)]);
                     if (missingFileAnswer) {
                       setRsvpError('Please upload the required file/image for all file upload questions.');
                       return;
@@ -977,28 +1078,19 @@ export default function EventDetailPage() {
                       <div key={q.id} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
                         <p className="text-sm font-medium text-slate-200 mb-1.5">{q.question}</p>
                         {q.type === 'file' ? (
-                          <a href={`${BACKEND_URL}${val}`} target="_blank" rel="noopener noreferrer"
-                            download={reviewAttendee.answers[String(q.id) + '_name'] || 'uploaded-file'}
-                            className="inline-flex items-center gap-1.5 text-sm text-amber-400 hover:text-amber-300 transition-colors">
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-                            </svg>
-                            {reviewAttendee.answers[String(q.id) + '_name'] || 'View file'}
-                          </a>
-                        ) : q.type === 'image' ? (
-                          <a href={`${BACKEND_URL}${val}`} target="_blank" rel="noopener noreferrer"
-                            title={reviewAttendee.answers[String(q.id) + '_name'] || 'Open image'}
-                            className="inline-block">
-                            <img src={`${BACKEND_URL}${val}`}
-                              alt={reviewAttendee.answers[String(q.id) + '_name'] || 'uploaded image'}
-                              className="w-28 h-28 rounded-xl object-cover border border-white/10 hover:border-amber-500/40 transition-all" />
-                          </a>
+                          <div className="mt-1">
+                            {renderFileUpload(
+                              val,
+                              reviewAttendee.answers[String(q.id) + '_name'],
+                              { thumbClass: 'w-28 h-28' }
+                            )}
+                          </div>
                         ) : (
                           <p className="text-sm text-slate-300 whitespace-pre-wrap">{val}</p>
                         )}
 
-                        {/* Review status for file/image answers */}
-                        {(q.type === 'file' || q.type === 'image') && (
+                        {/* Review status for file answers */}
+                        {q.type === 'file' && (
                           <div className="mt-3 pt-3 border-t border-white/5 flex items-center gap-2 flex-wrap">
                             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
                               ansStatus === 'verified'
@@ -1045,15 +1137,27 @@ export default function EventDetailPage() {
               {reviewAttendee.document_url && (
                 <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
                   <p className="text-sm font-medium text-slate-200 mb-1.5">Verification Document</p>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <a href={`${BACKEND_URL}${reviewAttendee.document_url}`} target="_blank" rel="noopener noreferrer"
-                      download={reviewAttendee.document_name || 'verification-document'}
-                      className="inline-flex items-center gap-1.5 text-sm text-amber-400 hover:text-amber-300 transition-colors">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-                      </svg>
-                      {reviewAttendee.document_name || 'View document'}
-                    </a>
+                  <div className="flex items-start gap-2 flex-wrap">
+                    {isImageFile(reviewAttendee.document_url) ? (
+                      <a href={`${BACKEND_URL}${reviewAttendee.document_url}`} target="_blank" rel="noopener noreferrer"
+                        className="group inline-block">
+                        <img
+                          src={`${BACKEND_URL}${reviewAttendee.document_url}`}
+                          alt={reviewAttendee.document_name || 'Verification document'}
+                          className="w-28 h-28 rounded-lg object-cover border border-white/10 group-hover:border-amber-500/40 transition-colors"
+                        />
+                        <p className="text-[11px] text-slate-500 mt-1 truncate max-w-[10rem] group-hover:text-amber-400 transition-colors">{reviewAttendee.document_name || 'Verification doc'}</p>
+                      </a>
+                    ) : (
+                      <a href={`${BACKEND_URL}${reviewAttendee.document_url}`} target="_blank" rel="noopener noreferrer"
+                        download={reviewAttendee.document_name || 'verification-document'}
+                        className="inline-flex items-center gap-1.5 text-sm text-amber-400 hover:text-amber-300 transition-colors">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                        </svg>
+                        {reviewAttendee.document_name || 'View document'}
+                      </a>
+                    )}
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
                       reviewAttendee.document_status === 'verified'
                         ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'

@@ -4,6 +4,18 @@ import path from 'path';
 import fs from 'fs';
 import { query } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
+import {
+  sendEmail,
+  rsvpConfirmationEmail,
+  rsvpDocumentPendingEmail,
+  rsvpDocumentApprovedEmail,
+  rsvpDocumentRejectedEmail,
+  answerVerifiedEmail,
+  answerRejectedEmail,
+  communityJoinedEmail,
+  communityLeftEmail,
+} from '../email';
+import { createNotification } from '../notificationHelper';
 
 const router = express.Router();
 
@@ -120,12 +132,21 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
       const qid = fileQuestionIds[i];
       if (!qid) continue;
       const question = questions.rows.find((row: any) => String(row.id) === String(qid));
-      // "image"-type questions only accept image files
-      if (question && question.type === 'image' && !file.mimetype.startsWith('image/')) {
-        return res.status(400).json({
-          error: `"${question.question}" requires an image file`,
-          message: `Please upload an image (JPG, PNG, GIF, WEBP) for: ${question.question}`,
-        });
+      // File-type questions: validate against file_accept setting
+      if (question && question.type === 'file') {
+        const accept = question.file_accept || 'both';
+        if (accept === 'images' && !file.mimetype.startsWith('image/')) {
+          return res.status(400).json({
+            error: `"${question.question}" requires an image file`,
+            message: `Please upload an image (JPG, PNG) for: ${question.question}`,
+          });
+        }
+        if (accept === 'documents' && file.mimetype.startsWith('image/')) {
+          return res.status(400).json({
+            error: `"${question.question}" requires a document file`,
+            message: `Please upload a document (PDF, DOC) for: ${question.question}`,
+          });
+        }
       }
       answerMap[String(qid)] = '/uploads/rsvp-documents/' + file.filename;
       answerMap[String(qid) + '_name'] = file.originalname;
@@ -234,6 +255,50 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
       'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
       [req.userId, user.rows[0]?.name || '', 'event_rsvp', `${newStatus === 'attending' ? 'RSVPed attending to' : 'Marked not attending for'} event: ${eventCheck.rows[0].title}`]
     );
+
+    // ─── Send RSVP email notifications ───
+    if (newStatus === 'attending' && prevStatus !== 'attending') {
+      const userName = user.rows[0]?.name || 'User';
+      const userEmail = req.body.email || '';
+      const eventTitle = eventCheck.rows[0].title;
+      const communityId = eventCheck.rows[0].community_id;
+
+      // Get event details and community name
+      const [eventDetails, communityDetails] = await Promise.all([
+        query('SELECT event_date, location FROM events WHERE id = $1', [event_id]),
+        query('SELECT name FROM communities WHERE id = $1', [communityId]),
+      ]);
+      const eventDate = eventDetails.rows[0]?.event_date
+        ? new Date(eventDetails.rows[0].event_date).toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+          })
+        : 'TBA';
+      const eventLocation = eventDetails.rows[0]?.location || 'TBA';
+      const communityName = communityDetails.rows[0]?.name || 'Community';
+
+      // Get user email if not in body
+      let recipientEmail = userEmail;
+      if (!recipientEmail) {
+        const emailResult = await query('SELECT email FROM users WHERE id = $1', [req.userId]);
+        recipientEmail = emailResult.rows[0]?.email || '';
+      }
+
+      if (recipientEmail) {
+        if (event.requires_documents) {
+          // Event requires documents — send "document pending" email
+          const emailContent = rsvpDocumentPendingEmail(userName, eventTitle, communityName);
+          sendEmail(recipientEmail, emailContent.subject, emailContent.html).catch((err) =>
+            console.error('Failed to send document pending email:', err)
+          );
+        } else {
+          // No documents required — send direct confirmation email
+          const emailContent = rsvpConfirmationEmail(userName, eventTitle, eventDate, eventLocation, communityName);
+          sendEmail(recipientEmail, emailContent.subject, emailContent.html).catch((err) =>
+            console.error('Failed to send RSVP confirmation email:', err)
+          );
+        }
+      }
+    }
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -347,6 +412,60 @@ router.patch('/rsvp/document-status', authMiddleware, async (req: AuthRequest, r
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'RSVP not found' });
     }
+
+    // ─── Send document status email notification ───
+    if (docStatus && (docStatus === 'verified' || docStatus === 'rejected')) {
+      // Get user info, event info, and community name
+      const [userRes, eventRes, communityRes] = await Promise.all([
+        query('SELECT name, email FROM users WHERE id = $1', [user_id]),
+        query('SELECT title, event_date, location FROM events WHERE id = $1', [event_id]),
+        query(`SELECT c.name, c.logo FROM communities c JOIN events e ON e.community_id = c.id WHERE e.id = $1`, [event_id]),
+      ]);
+
+      const userName = userRes.rows[0]?.name || 'User';
+      const userEmail = userRes.rows[0]?.email || '';
+      const eventTitle = eventRes.rows[0]?.title || 'Event';
+      const eventDate = eventRes.rows[0]?.event_date
+        ? new Date(eventRes.rows[0].event_date).toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+          })
+        : 'TBA';
+      const eventLocation = eventRes.rows[0]?.location || 'TBA';
+      const communityName = communityRes.rows[0]?.name || 'Community';
+
+      if (userEmail) {
+        if (docStatus === 'verified') {
+          const emailContent = rsvpDocumentApprovedEmail(userName, eventTitle, eventDate, eventLocation, communityName);
+          sendEmail(userEmail, emailContent.subject, emailContent.html).catch((err) =>
+            console.error('Failed to send document approved email:', err)
+          );
+          // Create in-app notification (respects preferences)
+          const docApprovedCommunityLogo = communityRes.rows[0]?.logo || null;
+          createNotification(
+            user_id, 'document_approved',
+            `Document Approved: ${eventTitle}`,
+            `Your document has been approved. You are now confirmed for ${eventTitle}!`,
+            `/events/${event_id}`,
+            docApprovedCommunityLogo
+          ).catch((err) => console.error('Failed to create document approved notification:', err));
+        } else if (docStatus === 'rejected') {
+          const emailContent = rsvpDocumentRejectedEmail(userName, eventTitle, communityName);
+          sendEmail(userEmail, emailContent.subject, emailContent.html).catch((err) =>
+            console.error('Failed to send document rejected email:', err)
+          );
+          // Create in-app notification (respects preferences)
+          const docRejectedCommunityLogo = communityRes.rows[0]?.logo || null;
+          createNotification(
+            user_id, 'document_rejected',
+            `Document Update Needed: ${eventTitle}`,
+            `Your document needs updating. Please re-submit for ${eventTitle}.`,
+            `/events/${event_id}`,
+            docRejectedCommunityLogo
+          ).catch((err) => console.error('Failed to create document rejected notification:', err));
+        }
+      }
+    }
+
     res.json(result.rows[0]);
   } catch (error) {
     next(error);
@@ -400,6 +519,54 @@ router.patch('/rsvp/answer-status', authMiddleware, async (req: AuthRequest, res
       'UPDATE rsvps SET answers = $1 WHERE event_id = $2 AND user_id = $3',
       [JSON.stringify(answers), event_id, user_id]
     );
+
+    // ─── Send answer status email notification ───
+    if (answerStatus && (answerStatus === 'verified' || answerStatus === 'rejected')) {
+      const [userRes, eventRes, communityRes, questionRes] = await Promise.all([
+        query('SELECT name, email FROM users WHERE id = $1', [user_id]),
+        query('SELECT title FROM events WHERE id = $1', [event_id]),
+        query(`SELECT c.name, c.logo FROM communities c JOIN events e ON e.community_id = c.id WHERE e.id = $1`, [event_id]),
+        query('SELECT question FROM event_questions WHERE id = $1', [question_id]),
+      ]);
+
+      const userName = userRes.rows[0]?.name || 'User';
+      const userEmail = userRes.rows[0]?.email || '';
+      const eventTitle = eventRes.rows[0]?.title || 'Event';
+      const communityName = communityRes.rows[0]?.name || 'Community';
+      const questionText = questionRes.rows[0]?.question || 'Registration question';
+
+      if (userEmail) {
+        if (answerStatus === 'verified') {
+          const emailContent = answerVerifiedEmail(userName, eventTitle, questionText, communityName);
+          sendEmail(userEmail, emailContent.subject, emailContent.html).catch((err) =>
+            console.error('Failed to send answer verified email:', err)
+          );
+          // Create in-app notification (respects preferences)
+          const answerApprovedCommunityLogo = communityRes.rows[0]?.logo || null;
+          createNotification(
+            user_id, 'answer_approved',
+            `Answer Approved: ${eventTitle}`,
+            `Your answer to "${questionText}" has been approved.`,
+            `/events/${event_id}`,
+            answerApprovedCommunityLogo
+          ).catch((err) => console.error('Failed to create answer approved notification:', err));
+        } else if (answerStatus === 'rejected') {
+          const emailContent = answerRejectedEmail(userName, eventTitle, questionText, communityName);
+          sendEmail(userEmail, emailContent.subject, emailContent.html).catch((err) =>
+            console.error('Failed to send answer rejected email:', err)
+          );
+          // Create in-app notification (respects preferences)
+          const answerRejectedCommunityLogo = communityRes.rows[0]?.logo || null;
+          createNotification(
+            user_id, 'answer_rejected',
+            `Answer Update Needed: ${eventTitle}`,
+            `Your answer to "${questionText}" needs updating. Please review and re-submit.`,
+            `/events/${event_id}`,
+            answerRejectedCommunityLogo
+          ).catch((err) => console.error('Failed to create answer rejected notification:', err));
+        }
+      }
+    }
 
     res.json({ user_id, question_id, status: answerStatus, answers });
   } catch (error) {
@@ -623,6 +790,15 @@ router.post('/community/join/:communityId', authMiddleware, async (req: AuthRequ
       [req.userId, user.rows[0]?.name || '', 'community_join', `Joined community: ${community.rows[0].name}`]
     );
 
+    // Send welcome email (non-blocking)
+    const memberEmail = await query('SELECT email FROM users WHERE id = $1', [req.userId]);
+    if (memberEmail.rows.length > 0) {
+      const emailContent = communityJoinedEmail(user.rows[0]?.name || 'Member', community.rows[0].name);
+      sendEmail(memberEmail.rows[0].email, emailContent.subject, emailContent.html).catch((err) =>
+        console.error('Failed to send community joined email:', err)
+      );
+    }
+
     res.json({ message: 'Joined community', joined: true });
   } catch (error) {
     next(error);
@@ -654,6 +830,9 @@ router.post('/community/leave/:communityId', authMiddleware, async (req: AuthReq
       return res.status(400).json({ error: 'You are not a member of this community' });
     }
 
+    // Get user info before deleting
+    const leaveUser = await query('SELECT name, email FROM users WHERE id = $1', [req.userId]);
+
     await query('DELETE FROM community_members WHERE user_id = $1 AND community_id = $2', [
       req.userId,
       communityId,
@@ -662,11 +841,18 @@ router.post('/community/leave/:communityId', authMiddleware, async (req: AuthReq
     await query('UPDATE communities SET member_count = GREATEST(member_count - 1, 0) WHERE id = $1', [communityId]);
 
     // Log activity
-    const user = await query('SELECT name FROM users WHERE id = $1', [req.userId]);
     await query(
       'INSERT INTO activity_log (user_id, user_name, action, description) VALUES ($1, $2, $3, $4)',
-      [req.userId, user.rows[0]?.name || '', 'community_leave', `Left community: ${community.rows[0].name}`]
+      [req.userId, leaveUser.rows[0]?.name || '', 'community_leave', `Left community: ${community.rows[0].name}`]
     );
+
+    // Send leave email (non-blocking)
+    if (leaveUser.rows.length > 0) {
+      const emailContent = communityLeftEmail(leaveUser.rows[0].name || 'Member', community.rows[0].name);
+      sendEmail(leaveUser.rows[0].email, emailContent.subject, emailContent.html).catch((err) =>
+        console.error('Failed to send community left email:', err)
+      );
+    }
 
     res.json({ message: 'Left community', left: true });
   } catch (error) {
