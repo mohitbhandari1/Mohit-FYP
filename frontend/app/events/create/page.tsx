@@ -205,7 +205,7 @@ export default function CreateEventPage() {
         router.push(`/events/${data.id || data.event?.id || ''}`);
       } else {
         const errData = await res.json().catch(() => null);
-        setError(errData?.message || 'Failed to create event');
+        setError(errData?.message || errData?.error || 'Failed to create event');
       }
     } catch (err) { setError('Something went wrong. Please try again.'); }
     finally { setSubmitting(false); }

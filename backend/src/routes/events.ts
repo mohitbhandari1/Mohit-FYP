@@ -370,7 +370,7 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
         guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
         agenda, requirements, instructions,
         age_limit, requires_documents, document_instructions, require_approval, attendee_count)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, 0)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
        RETURNING *`,
       [community_id, title, description, event_date, start_time || null, end_date || null, end_time || null,
        duration || null, location || null, event_type || 'physical', bannerImage,

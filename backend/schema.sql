@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS events (
   age_limit VARCHAR(100),
   requires_documents BOOLEAN DEFAULT FALSE,
   document_instructions TEXT,
+  require_approval BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
