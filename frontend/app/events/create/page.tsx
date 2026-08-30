@@ -462,14 +462,15 @@ export default function CreateEventPage() {
                           <label className="block text-xs font-medium text-slate-400">Options</label>
                           <div className="space-y-1.5">
                             {(() => {
-                              const opts = q.options ? q.options.split(',').map((s: string) => s.trim()).filter(Boolean) : [''];
+                              // Preserve blank rows so newly added options remain visible and editable.
+                              const opts = q.options ? q.options.split(',').map((s: string) => s.trim()) : [''];
                               return opts.map((opt: string, oi: number) => (
                                 <div key={oi} className="flex items-center gap-2">
                                   <span className="text-slate-500 text-xs w-5 text-center shrink-0">{oi + 1}.</span>
                                   <input type="text" value={opt}
                                     placeholder={`Option ${oi + 1}`}
                                     onChange={(e) => {
-                                      const parts = q.options ? q.options.split(',').map((s: string) => s.trim()) : [];
+                                      const parts = q.options ? q.options.split(',').map((s: string) => s.trim()) : [''];
                                       parts[oi] = e.target.value;
                                       while (parts.length <= oi) parts.push('');
                                       updateQuestion(index, 'options', parts.join(', '));
@@ -477,7 +478,7 @@ export default function CreateEventPage() {
                                     className="flex-1 bg-transparent border-b border-white/10 px-1 py-1 text-sm text-slate-200 placeholder-slate-600 focus:border-amber-500/50 focus:outline-none transition-all" />
                                   {opts.length > 1 && (
                                     <button type="button" onClick={() => {
-                                      const parts = q.options ? q.options.split(',').map((s: string) => s.trim()) : [];
+                                      const parts = q.options ? q.options.split(',').map((s: string) => s.trim()) : [''];
                                       parts.splice(oi, 1);
                                       updateQuestion(index, 'options', parts.join(', '));
                                     }} className="text-slate-500 hover:text-red-400 text-xs">✕</button>
@@ -487,7 +488,7 @@ export default function CreateEventPage() {
                             })()}
                           </div>
                           <button type="button" onClick={() => {
-                            const parts = q.options ? q.options.split(',').map((s: string) => s.trim()) : [];
+                            const parts = q.options ? q.options.split(',').map((s: string) => s.trim()) : [''];
                             parts.push('');
                             updateQuestion(index, 'options', parts.join(', '));
                           }} className="text-xs text-amber-400/70 hover:text-amber-400 transition-colors">
