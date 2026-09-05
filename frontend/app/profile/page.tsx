@@ -33,6 +33,13 @@ export default function ProfilePage() {
     document_rejected: true,
     answer_approved: true,
     answer_rejected: true,
+    community_joined: true,
+    rsvp_pending: true,
+    rsvp_confirmed: true,
+    rsvp_approved: true,
+    rsvp_rejected: true,
+    membership_approved: true,
+    membership_rejected: true,
   });
   const [prefsSaving, setPrefsSaving] = useState(false);
   const [prefsSuccess, setPrefsSuccess] = useState('');
@@ -556,6 +563,12 @@ export default function ProfilePage() {
 
             <div className="space-y-1">
               <PrefToggle
+                label="Community Joined"
+                description="When you join a community"
+                enabled={notifPrefs.community_joined}
+                onToggle={() => togglePref('community_joined')}
+              />
+              <PrefToggle
                 label="New Events"
                 description="When a community you follow posts a new event"
                 enabled={notifPrefs.new_event}
@@ -566,6 +579,30 @@ export default function ProfilePage() {
                 description="When a community you follow posts an announcement"
                 enabled={notifPrefs.announcement}
                 onToggle={() => togglePref('announcement')}
+              />
+              <PrefToggle
+                label="Registration Pending"
+                description="When your event registration is under review"
+                enabled={notifPrefs.rsvp_pending}
+                onToggle={() => togglePref('rsvp_pending')}
+              />
+              <PrefToggle
+                label="Registration Confirmed"
+                description="When your event registration is confirmed"
+                enabled={notifPrefs.rsvp_confirmed}
+                onToggle={() => togglePref('rsvp_confirmed')}
+              />
+              <PrefToggle
+                label="Registration Approved"
+                description="When the organizer approves your event registration"
+                enabled={notifPrefs.rsvp_approved}
+                onToggle={() => togglePref('rsvp_approved')}
+              />
+              <PrefToggle
+                label="Registration Rejected"
+                description="When the organizer cannot approve your event registration"
+                enabled={notifPrefs.rsvp_rejected}
+                onToggle={() => togglePref('rsvp_rejected')}
               />
               <PrefToggle
                 label="Document Approved"
@@ -590,6 +627,18 @@ export default function ProfilePage() {
                 description="When your registration answer needs updating"
                 enabled={notifPrefs.answer_rejected}
                 onToggle={() => togglePref('answer_rejected')}
+              />
+              <PrefToggle
+                label="Membership Approved"
+                description="When your membership application is approved"
+                enabled={notifPrefs.membership_approved}
+                onToggle={() => togglePref('membership_approved')}
+              />
+              <PrefToggle
+                label="Membership Rejected"
+                description="When your membership application is not approved"
+                enabled={notifPrefs.membership_rejected}
+                onToggle={() => togglePref('membership_rejected')}
               />
             </div>
 

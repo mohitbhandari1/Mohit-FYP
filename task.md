@@ -19,10 +19,15 @@
 - `[ ]` Add role badges & dropdown in Organization dashboard
 
 ## Feature 4: Notifications
-- `[ ]` Create `backend/src/routes/notifications.ts`
-- `[ ]` Register notifications router
-- `[ ]` Make Navbar bell functional with dropdown
-- `[ ]` Create notifications page
+- `[x]` Create `backend/src/routes/notifications.ts`
+- `[x]` Register notifications router
+- `[x]` Make Navbar bell functional with dropdown
+- `[x]` Create notifications page (`/notifications` — full history with filters, pagination, mark-read, delete)
+- `[x]` In-app notification + email on community join (both join endpoints)
+- `[x]` In-app notification on RSVP confirmation, approval, rejection
+- `[x]` In-app notification on membership application approve/reject
+- `[x]` New preference types: community_joined, rsvp_*, membership_* (migration-v15.sql)
+- `[x]` Profile page toggles for all new preference types
 
 ## Feature 5: Saved Events
 - `[ ]` Add saved events endpoints to engagement routes

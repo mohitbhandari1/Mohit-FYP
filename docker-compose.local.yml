@@ -53,7 +53,8 @@ services:
       RESEND_API_KEY: re_ETcfFL5u_KfijmpxPqmTFMfgiY5fR6aQd
       FROM_EMAIL: onboarding@resend.dev
       GMAIL_USER: bhandarimohit257@gmail.com
-      GMAIL_APP_PASSWORD: vhmi ujjr lsnz goky
+      # Google app passwords are 16 chars, no spaces (Google's UI shows them grouped)
+      GMAIL_APP_PASSWORD: vhmiujjrlsnzgoky
       FRONTEND_URL: http://localhost:3000
     depends_on:
       db:

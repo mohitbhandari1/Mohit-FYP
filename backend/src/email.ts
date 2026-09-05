@@ -1,10 +1,15 @@
-// Email service using Nodemailer with Gmail SMTP
-// Uses Gmail app password for SMTP authentication
+// Email service — Resend REST API primary, Gmail SMTP fallback, console dev-log last.
+// Resend is preferred (better deliverability, no 2FA dependency); if RESEND_API_KEY
+// is missing or a send fails, we automatically retry over Gmail SMTP.
 
 import nodemailer from 'nodemailer';
 
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
 const GMAIL_USER = process.env.GMAIL_USER || '';
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || '';
+// Google app passwords are exactly 16 chars with no spaces — Google's UI displays
+// them grouped with spaces, so strip any whitespace the user may have copied.
+const GMAIL_APP_PASSWORD = (process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, '');
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 let transporter: nodemailer.Transporter | null = null;
@@ -13,7 +18,7 @@ function getTransporter(): nodemailer.Transporter {
   if (transporter) return transporter;
 
   if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
-    console.error('[Email] GMAIL_USER or GMAIL_APP_PASSWORD not set — emails will log to console only');
+    console.error('[Email] GMAIL_USER or GMAIL_APP_PASSWORD not set — Gmail fallback unavailable');
   }
 
   transporter = nodemailer.createTransport({
@@ -27,32 +32,114 @@ function getTransporter(): nodemailer.Transporter {
   return transporter;
 }
 
-export async function sendEmail(to: string, subject: string, html: string) {
-  if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
-    // Dev mode - log email to console
-    console.log(`\n📧 [DEV EMAIL — Gmail not configured]`);
-    console.log(`   To: ${to}`);
-    console.log(`   Subject: ${subject}`);
-    console.log(`   Preview: ${html.replace(/<[^>]*>/g, '').substring(0, 200)}...`);
-    console.log(`   📌 Set GMAIL_USER and GMAIL_APP_PASSWORD in backend/.env to send real emails\n`);
-    return { success: true, devMode: true };
-  }
+// ─── Resend transport (primary) ───
 
-  try {
-    const info = await getTransporter().sendMail({
-      from: `"Smart Connects" <${GMAIL_USER}>`,
-      to,
+async function sendViaResend(
+  to: string,
+  subject: string,
+  html: string
+): Promise<{ success: boolean; id?: string }> {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: `Smart Connects <${FROM_EMAIL}>`,
+      to: [to],
       subject,
       html,
-    });
+    }),
+  });
 
-    console.log(`✅ Email sent to ${to}: "${subject}" (ID: ${info.messageId})`);
-    return { success: true, id: info.messageId };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`❌ Email send failed: ${errorMessage}`);
-    return { success: false, error: { message: errorMessage } };
+  const data = await res.json().catch(() => ({} as any));
+
+  if (!res.ok) {
+    const message = data?.message || `HTTP ${res.status}`;
+    throw new Error(`Resend: ${message}`);
   }
+
+  return { success: true, id: data?.id };
+}
+
+// ─── Gmail SMTP fallback ───
+
+async function sendViaGmail(
+  to: string,
+  subject: string,
+  html: string
+): Promise<{ success: boolean; id?: string }> {
+  const info = await getTransporter().sendMail({
+    from: `"Smart Connects" <${GMAIL_USER}>`,
+    to,
+    subject,
+    html,
+  });
+  return { success: true, id: info.messageId };
+}
+
+export async function sendEmail(to: string, subject: string, html: string) {
+  if (!to) return { success: false, error: { message: 'No recipient' } };
+
+  // 1) Resend (primary)
+  if (RESEND_API_KEY) {
+    try {
+      const result = await sendViaResend(to, subject, html);
+      console.log(`✅ Email sent via Resend to ${to}: "${subject}" (ID: ${result.id})`);
+      return result;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`⚠️ Resend send failed, falling back to Gmail: ${msg}`);
+    }
+  }
+
+  // 2) Gmail SMTP (fallback)
+  if (GMAIL_USER && GMAIL_APP_PASSWORD) {
+    try {
+      const result = await sendViaGmail(to, subject, html);
+      console.log(`✅ Email sent via Gmail to ${to}: "${subject}"`);
+      return result;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`❌ Gmail send failed: ${msg}`);
+    }
+  }
+
+  // 3) Dev mode — nothing configured, log to console
+  console.log(`\n📧 [DEV EMAIL — no email provider configured]`);
+  console.log(`   To: ${to}`);
+  console.log(`   Subject: ${subject}`);
+  console.log(`   Preview: ${html.replace(/<[^>]*>/g, '').substring(0, 200)}...`);
+  console.log(`   📌 Set RESEND_API_KEY (+ FROM_EMAIL) or GMAIL_USER/GMAIL_APP_PASSWORD\n`);
+  return { success: true, devMode: true };
+}
+
+export async function verifyEmailConfig(): Promise<boolean> {
+  if (RESEND_API_KEY) {
+    try {
+      const res = await fetch('https://api.resend.com/domains', {
+        headers: { Authorization: `Bearer ${RESEND_API_KEY}` },
+      });
+      if (res.ok) {
+        console.log('[Email] Resend configured ✅');
+        return true;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (GMAIL_USER && GMAIL_APP_PASSWORD) {
+    try {
+      await getTransporter().verify();
+      console.log('[Email] Gmail SMTP configured ✅');
+      return true;
+    } catch {
+      // fall through
+    }
+  }
+  console.warn('[Email] No working email provider configured — emails will log to console only');
+  return false;
 }
 
 // ─── Email Templates ───

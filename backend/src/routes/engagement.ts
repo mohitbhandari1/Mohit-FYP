@@ -272,7 +272,7 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
       // Get event details and community name
       const [eventDetails, communityDetails] = await Promise.all([
         query('SELECT event_date, location FROM events WHERE id = $1', [event_id]),
-        query('SELECT name FROM communities WHERE id = $1', [communityId]),
+        query('SELECT name, logo FROM communities WHERE id = $1', [communityId]),
       ]);
       const eventDate = eventDetails.rows[0]?.event_date
         ? new Date(eventDetails.rows[0].event_date).toLocaleDateString('en-US', {
@@ -317,6 +317,14 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
             sendEmail(recipientEmail, emailContent.subject, emailContent.html).catch((err) =>
               console.error('Failed to send RSVP confirmation email:', err)
             );
+            // In-app notification
+            if (req.userId) createNotification(
+              req.userId, 'rsvp_confirmed',
+              `You're Attending: ${eventTitle}`,
+              `Your registration for ${eventTitle} is confirmed. See you there!`,
+              `/events/${event_id}`,
+              communityDetails.rows[0]?.logo || null
+            ).catch(() => {});
           }
         }
       }
@@ -937,6 +945,14 @@ router.post('/community/join/:communityId', authMiddleware, async (req: AuthRequ
         console.error('Failed to send community joined email:', err)
       );
     }
+
+    // Create in-app notification (non-blocking, respects user preferences)
+    if (req.userId) createNotification(
+      req.userId, 'community_joined',
+      `Welcome to ${community.rows[0].name}!`,
+      `You've successfully joined ${community.rows[0].name}.`,
+      `/communities/${communityId}`
+    ).catch(() => {});
 
     res.json({ message: 'Joined community', joined: true });
   } catch (error) {

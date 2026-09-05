@@ -40,7 +40,7 @@ done
 # Step 5: Run ALL migrations (idempotent)
 echo ""
 echo "[5/7] Running database migrations..."
-for f in backend/migration.sql backend/migration-v2.sql backend/migration-v3.sql backend/migration-v4.sql backend/migration-v5.sql backend/migration-v6.sql backend/migration-v7.sql backend/migration-v8.sql backend/migration-v9.sql backend/migration-v10.sql backend/migration-v11.sql backend/migration-v12.sql backend/migration-v13.sql backend/migration-v14.sql; do
+for f in backend/migration.sql backend/migration-v2.sql backend/migration-v3.sql backend/migration-v4.sql backend/migration-v5.sql backend/migration-v6.sql backend/migration-v7.sql backend/migration-v8.sql backend/migration-v9.sql backend/migration-v10.sql backend/migration-v11.sql backend/migration-v12.sql backend/migration-v13.sql backend/migration-v14.sql backend/migration-v15.sql; do
   if [ -f "$f" ]; then
     docker exec -i smartconnects-db psql -U postgres -d smart_connects < "$f" 2>&1 | grep -v NOTICE && echo "  [OK] $f" || echo "  [skip] $f"
   fi

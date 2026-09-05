@@ -37,6 +37,7 @@ export default function Navbar() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifLoading, setNotifLoading] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+  const isAdmin = user?.role === 'admin' || user?.is_admin === true;
 
   // Close dropdowns on outside click (use mouseup to avoid race with onClick)
   useEffect(() => {
@@ -244,6 +245,16 @@ export default function Navbar() {
           <div className="flex items-center gap-3">
             {isAuthenticated && user ? (
               <>
+                {isAdmin && !pathname.startsWith('/admin') && (
+                  <Link href="/admin"
+                    className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-xs font-medium text-red-300 hover:text-red-200 hover:bg-red-500/20 transition-all"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                    </svg>
+                    Admin Dashboard
+                  </Link>
+                )}
                 {/* Dashboard toggle - only for users who own communities */}
                 {user.owns_community && pathname.startsWith('/organization') && (
                   <Link href="/"
@@ -304,12 +315,17 @@ export default function Navbar() {
                           <div className="flex items-center justify-center py-8">
                             <div className="w-6 h-6 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
                           </div>
+                        ) : notifications.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+                            <p className="text-sm text-slate-400">No notifications yet</p>
+                            <p className="text-xs text-slate-500 mt-1">Join communities and RSVP to events to see updates here.</p>
+                          </div>
                         ) : (
                           notifications.map((notif) => (
                             <div
                               key={notif.id}
                               onClick={() => markAsRead(notif)}
-                              className={`flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors border-b border-slate-800/30 last:border-0 ${
+                              className={`group flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors border-b border-slate-800/30 last:border-0 ${
                                 notif.is_read
                                   ? 'hover:bg-white/5'
                                   : 'bg-amber-500/5 hover:bg-amber-500/10'
@@ -350,7 +366,6 @@ export default function Navbar() {
                               <button
                                 onClick={(e) => deleteNotification(e, notif.id)}
                                 className="flex-shrink-0 p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
-                                style={{ opacity: 1 }}
                               >
                                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -359,6 +374,17 @@ export default function Navbar() {
                             </div>
                           ))
                         )}
+                      </div>
+
+                      {/* Footer — full history */}
+                      <div className="border-t border-slate-800/60">
+                        <Link
+                          href="/notifications"
+                          onClick={() => setNotifOpen(false)}
+                          className="block w-full text-center py-3 text-sm font-medium text-amber-400 hover:text-amber-300 hover:bg-amber-500/5 transition-colors"
+                        >
+                          View all notifications
+                        </Link>
                       </div>
                     </div>
                   )}
@@ -393,6 +419,12 @@ export default function Navbar() {
                         <DropdownLink href="/profile" icon="user">Profile</DropdownLink>
                         <DropdownLink href="/my-communities" icon="users">My Communities</DropdownLink>
                         <DropdownLink href="/my-events" icon="calendar">My Events</DropdownLink>
+                        {isAdmin && (
+                          <>
+                            <div className="my-1 border-t border-slate-800/60" />
+                            <DropdownLink href="/admin" icon="shield">Admin Dashboard</DropdownLink>
+                          </>
+                        )}
                         {user.owns_community && (
                           <>
                             <div className="px-3 py-1.5">
@@ -466,6 +498,18 @@ export default function Navbar() {
                   {link.label}
                 </Link>
               ))}
+              {isAuthenticated && isAdmin && (
+                <Link
+                  href="/admin"
+                  className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    pathname.startsWith('/admin')
+                      ? 'text-red-300 bg-red-500/10'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  Admin Dashboard
+                </Link>
+              )}
             </div>
           </div>
         )}
@@ -496,6 +540,11 @@ function DropdownLink({ href, icon, children }: { href: string; icon: string; ch
     briefcase: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+      </svg>
+    ),
+    shield: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l7 4v5c0 5-3.5 8.5-7 9-3.5-.5-7-4-7-9V7l7-4zm-3 9l2 2 4-4" />
       </svg>
     ),
   };

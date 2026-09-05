@@ -5,7 +5,8 @@ import fs from 'fs';
 import * as XLSX from 'xlsx';
 import { query } from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
-import { sendEmail, membershipApprovedEmail, membershipRejectedEmail, membershipSubmittedEmail } from '../email';
+import { sendEmail, membershipApprovedEmail, membershipRejectedEmail, membershipSubmittedEmail, communityJoinedEmail } from '../email';
+import { createNotification } from '../notificationHelper';
 
 const router = express.Router();
 
@@ -483,6 +484,23 @@ router.post('/:id/join', authMiddleware, async (req: AuthRequest, res, next) => 
       [req.userId, user.rows[0]?.name || '', 'community_join', `Joined community: ${community.rows[0].name}`]
     );
 
+    // Send welcome email (non-blocking) — parity with engagement join endpoint
+    const memberEmail = await query('SELECT email FROM users WHERE id = $1', [req.userId]);
+    if (memberEmail.rows.length > 0) {
+      const emailContent = communityJoinedEmail(user.rows[0]?.name || 'Member', community.rows[0].name);
+      sendEmail(memberEmail.rows[0].email, emailContent.subject, emailContent.html).catch((err) =>
+        console.error('Failed to send community joined email:', err)
+      );
+    }
+
+    // Create in-app notification (non-blocking, respects user preferences)
+    if (req.userId) createNotification(
+      req.userId, 'community_joined',
+      `Welcome to ${community.rows[0].name}!`,
+      `You've successfully joined ${community.rows[0].name}.`,
+      `/communities/${communityId}`
+    ).catch(() => {});
+
     res.json({ message: 'Joined community', joined: true });
   } catch (error) {
     next(error);
@@ -732,8 +750,20 @@ router.patch('/:id/membership-applications/:appId', authMiddleware, async (req: 
         const communityName = commRes.rows[0].name;
         if (status === 'approved') {
           sendEmail(userEmail, ...Object.values(membershipApprovedEmail(userName, communityName)));
+          createNotification(
+            result.rows[0].user_id, 'membership_approved',
+            `Membership Approved: ${communityName}`,
+            `Your membership application for ${communityName} has been approved. Welcome aboard!`,
+            `/communities/${req.params.id}`
+          ).catch(() => {});
         } else if (status === 'rejected') {
           sendEmail(userEmail, ...Object.values(membershipRejectedEmail(userName, communityName, admin_notes)));
+          createNotification(
+            result.rows[0].user_id, 'membership_rejected',
+            `Membership Update: ${communityName}`,
+            `Your membership application for ${communityName} was not approved at this time.`,
+            `/communities/${req.params.id}`
+          ).catch(() => {});
         }
       }
     } catch (emailErr) { console.error('[Email] Failed to send membership review email:', emailErr); }
