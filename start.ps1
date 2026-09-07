@@ -90,7 +90,9 @@ $migrations = @(
     "backend/migration-v12.sql",
     "backend/migration-v13.sql",
     "backend/migration-v14.sql",
-    "backend/migration-v15.sql"
+    "backend/migration-v15.sql",
+    "backend/migration-v16.sql",
+    "backend/migration-v17.sql"
 )
 $migrationFailed = $false
 foreach ($file in $migrations) {

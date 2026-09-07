@@ -51,7 +51,7 @@
 - `[ ]` Add analytics section in Organizer dashboard
 
 ## Feature 9: Event Check-in
-- `[ ]` Create `backend/migration-v7.sql`
+- `[x]` Create `backend/migration-v7.sql`
 - `[ ]` Add check-in endpoints
 - `[ ]` Create check-in page
 
