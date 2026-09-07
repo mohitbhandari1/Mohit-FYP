@@ -41,21 +41,21 @@ services:
     ports:
       - "4000:4000"
     environment:
-      # ── Local secrets / config ──
+      # ── Local secrets / config (values come from the gitignored .env file) ──
       PORT: 4000
       PGHOST: db
       PGPORT: 5432
       PGUSER: postgres
       PGPASSWORD: postgres
       PGDATABASE: smart_connects
-      JWT_SECRET: smart-connects-local-jwt-secret-2026
-      GEMINI_API_KEY: AQ.Ab8RN6Ig-H-MkmR95UTThVg-xAdj8HgqoL1G5Zb7kSSIKCQKdQ
-      RESEND_API_KEY: re_ETcfFL5u_KfijmpxPqmTFMfgiY5fR6aQd
-      FROM_EMAIL: onboarding@resend.dev
-      GMAIL_USER: bhandarimohit257@gmail.com
+      JWT_SECRET: ${JWT_SECRET:-smart-connects-local-jwt-secret-2026}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      FROM_EMAIL: ${FROM_EMAIL:-onboarding@resend.dev}
+      GMAIL_USER: ${GMAIL_USER:-}
       # Google app passwords are 16 chars, no spaces (Google's UI shows them grouped)
-      GMAIL_APP_PASSWORD: vhmiujjrlsnzgoky
-      FRONTEND_URL: http://localhost:3000
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
     depends_on:
       db:
         condition: service_healthy
