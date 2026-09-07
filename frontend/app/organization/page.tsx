@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '../components/Navbar';
@@ -10,7 +10,19 @@ import ImageCropper from '../components/ImageCropper';
 import { useToast } from '../components/Toast';
 import { apiFetch, BACKEND_URL } from '../lib/auth';
 
-type Tab = 'overview' | 'members' | 'settings' | 'events';
+type Tab = 'overview' | 'members' | 'requests' | 'settings' | 'events';
+
+interface PendingRsvpRequest {
+  event_id: number;
+  event_title: string;
+  user_id: number;
+  name: string;
+  full_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  avatar_url?: string | null;
+  created_at: string;
+}
 
 const CATEGORIES = [
   'Education', 'Technology', 'Social Service', 'Business & Entrepreneurship',
@@ -27,6 +39,68 @@ export default function OrganizationDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Pending registration requests (RSVPs awaiting approval) across the community's events
+  const [pendingRequests, setPendingRequests] = useState<PendingRsvpRequest[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(false);
+  const [processingRequest, setProcessingRequest] = useState<string | null>(null); // `${event_id}-${user_id}`
+
+  const fetchPendingRequests = useCallback(async () => {
+    if (!selectedCommunity) { setPendingRequests([]); return; }
+    setLoadingRequests(true);
+    try {
+      const eventsRes = await apiFetch(`/api/communities/${selectedCommunity.id}/events`);
+      if (!eventsRes.ok) { setPendingRequests([]); return; }
+      const eventList = await eventsRes.json();
+      const rows = await Promise.all(
+        (Array.isArray(eventList) ? eventList : []).map(async (event: any) => {
+          const res = await apiFetch(`/api/engagement/rsvp/event/${event.id}`);
+          if (!res.ok) return [];
+          const rsvps = await res.json();
+          return (Array.isArray(rsvps) ? rsvps : [])
+            .filter((r: any) => r.status === 'pending')
+            .map((r: any) => ({ ...r, event_id: event.id, event_title: event.title }));
+        })
+      );
+      setPendingRequests(rows.flat());
+    } catch { /* silent */ }
+    setLoadingRequests(false);
+  }, [selectedCommunity]);
+
+  useEffect(() => {
+    if (activeTab === 'requests') fetchPendingRequests();
+  }, [activeTab, fetchPendingRequests]);
+
+  // Approve or reject a pending registration request
+  const handleRsvpRequest = async (req: PendingRsvpRequest, action: 'approve' | 'reject') => {
+    const key = `${req.event_id}-${req.user_id}`;
+    setProcessingRequest(key);
+    try {
+      const res = await apiFetch('/api/engagement/rsvp/approve-reject', {
+        method: 'PATCH',
+        body: JSON.stringify({ event_id: req.event_id, user_id: req.user_id, action }),
+      });
+      if (res.ok) {
+        setPendingRequests((prev) => prev.filter(
+          (r) => !(r.event_id === req.event_id && r.user_id === req.user_id)
+        ));
+        if (action === 'approve') {
+          setEvents((prev) => prev.map((e: any) =>
+            e.id === req.event_id
+              ? { ...e, attendee_count: (e.attendee_count || 0) + 1 }
+              : e
+          ));
+        }
+        addToast('success', action === 'approve'
+          ? `Approved ${req.name || req.full_name} for ${req.event_title}`
+          : `Rejected ${req.name || req.full_name} for ${req.event_title}`);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        addToast('error', data.error || `Failed to ${action} request`);
+      }
+    } catch { addToast('error', `Failed to ${action} request`); }
+    finally { setProcessingRequest(null); }
+  };
 
   // Settings form
   const [formData, setFormData] = useState({
@@ -322,13 +396,14 @@ export default function OrganizationDashboard() {
 
               {/* Tab Bar */}
               <div className="flex gap-1 mb-6 bg-white/[0.03] backdrop-blur-xl rounded-xl border border-white/10 p-1 w-fit">
-                {(['overview', 'members', 'settings', 'events'] as const).map((tab) => (
+                {(['overview', 'members', 'requests', 'settings', 'events'] as const).map((tab) => (
                   <button key={tab} onClick={() => setActiveTab(tab)}
                     className={`px-4 py-2 text-sm font-medium rounded-lg transition-all capitalize ${
                       activeTab === tab ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
                     }`}>
                     {tab === 'overview' && '📊 Overview'}
                     {tab === 'members' && '👥 Members'}
+                    {tab === 'requests' && `📝 Requests${pendingRequests.length > 0 ? ` (${pendingRequests.length})` : ''}`}
                     {tab === 'settings' && '⚙️ Settings'}
                     {tab === 'events' && '📅 Events'}
                   </button>
@@ -504,6 +579,84 @@ export default function OrganizationDashboard() {
               )}
 
               {/* ─── Tab: Settings ─── */}
+              {/* ─── Requests Tab (pending RSVP registrations) ─── */}
+              {activeTab === 'requests' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-100">Registration Requests</h2>
+                      <p className="text-sm text-slate-400">People waiting for your approval to join your events</p>
+                    </div>
+                    <button
+                      onClick={fetchPendingRequests}
+                      disabled={loadingRequests}
+                      className="px-4 py-2 rounded-xl border border-white/10 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-all disabled:opacity-50"
+                    >
+                      {loadingRequests ? 'Refreshing...' : '↻ Refresh'}
+                    </button>
+                  </div>
+
+                  {loadingRequests ? (
+                    <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-10 flex justify-center">
+                      <div className="w-8 h-8 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
+                    </div>
+                  ) : pendingRequests.length === 0 ? (
+                    <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-10 text-center">
+                      <div className="text-4xl mb-3">📭</div>
+                      <p className="text-slate-300 font-medium">No pending requests</p>
+                      <p className="text-sm text-slate-500 mt-1">When someone requests to join one of your events, it will appear here.</p>
+                    </div>
+                  ) : (
+                    pendingRequests.map((req) => (
+                      <div key={`${req.event_id}-${req.user_id}`} className="rounded-2xl border border-amber-500/10 bg-white/[0.02] backdrop-blur-xl p-5">
+                        <div className="flex items-center gap-4">
+                          {/* Avatar */}
+                          <div className="w-11 h-11 rounded-full bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center text-sm font-bold text-black overflow-hidden shrink-0">
+                            {req.avatar_url ? (
+                              <img src={req.avatar_url.startsWith('http') ? req.avatar_url : `${BACKEND_URL}${req.avatar_url}`} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              (req.name || req.full_name || '?').charAt(0).toUpperCase()
+                            )}
+                          </div>
+
+                          {/* Info */}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-slate-100 truncate">
+                              {req.full_name || req.name || 'Unknown'}
+                              {req.phone && <span className="text-slate-500 font-normal"> · 📞 {req.phone}</span>
+                              }
+                            </p>
+                            <p className="text-xs text-slate-400 truncate">
+                              wants to join <Link href={`/events/${req.event_id}`} className="text-amber-400 hover:text-amber-300">{req.event_title}</Link>
+                              {req.created_at && <span className="text-slate-500"> · {new Date(req.created_at).toLocaleDateString()}</span>}
+                            </p>
+                            {req.email && <p className="text-xs text-slate-500 truncate">✉️ {req.email}</p>}
+                          </div>
+
+                          {/* Actions */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={() => handleRsvpRequest(req, 'approve')}
+                              disabled={processingRequest === `${req.event_id}-${req.user_id}`}
+                              className="px-4 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-sm font-medium hover:bg-emerald-500/25 transition-all disabled:opacity-50"
+                            >
+                              ✓ Approve
+                            </button>
+                            <button
+                              onClick={() => handleRsvpRequest(req, 'reject')}
+                              disabled={processingRequest === `${req.event_id}-${req.user_id}`}
+                              className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm font-medium hover:bg-red-500/20 transition-all disabled:opacity-50"
+                            >
+                              ✕ Reject
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
               {activeTab === 'settings' && (
                 <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-6 sm:p-8">
                   <h2 className="text-lg font-semibold text-slate-100 mb-1">Community Settings</h2>

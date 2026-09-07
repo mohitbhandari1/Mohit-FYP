@@ -76,6 +76,17 @@ userApplicationsRouter.post(
     if (!community_name || !description) {
       return res.status(400).json({ error: 'Community name and description are required' });
     }
+    // ─── 10-digit phone validation (organizer application) ───
+    if (phone !== undefined && phone !== null && String(phone).trim() !== '') {
+      const digits = String(phone).replace(/\D/g, '');
+      const local = digits.length === 11 && digits.startsWith('0') ? digits.slice(1) : digits;
+      if (local.length !== 10) {
+        return res.status(400).json({
+          error: 'Phone number must be exactly 10 digits',
+          message: 'Please enter a valid 10-digit phone number (e.g. 9876543210).',
+        });
+      }
+    }
 
     try {
       // Check if user already has a pending application

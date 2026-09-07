@@ -71,6 +71,15 @@ export default function MembershipApplyPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // ─── 10-digit phone validation ───
+    if (form.phone?.trim()) {
+      const digits = form.phone.replace(/\D/g, '');
+      const local = digits.length === 11 && digits.startsWith('0') ? digits.slice(1) : digits;
+      if (local.length !== 10) {
+        addToast('error', 'Phone number must be exactly 10 digits (e.g. 9876543210).');
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       const res = await apiFetch(`/api/communities/${id}/membership-application`, {
@@ -265,10 +274,24 @@ export default function MembershipApplyPage() {
                 type="tel"
                 name="phone"
                 value={form.phone}
-                onChange={handleChange}
-                placeholder="+92 3XX XXXXXXX"
+                onChange={(e) => {
+                  // Allow only digits, spaces, dashes, parentheses (max 14 chars)
+                  const v = e.target.value.replace(/[^0-9\s\-()+]/g, '').slice(0, 14);
+                  setForm((prev) => ({ ...prev, phone: v }));
+                }}
+                placeholder="9876543210 (10 digits)"
+                maxLength={14}
                 className="input-glass w-full rounded-xl"
               />
+              {form.phone && (() => {
+                const digits = form.phone.replace(/\D/g, '');
+                const ok = (digits.length === 11 && digits.startsWith('0') ? digits.slice(1) : digits).length === 10;
+                return (
+                  <p className={`text-xs mt-1 ${ok ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {ok ? '✓ Valid phone number' : `${digits.length}/10 digits`}
+                  </p>
+                );
+              })()}
             </div>
 
             <div className="pt-3 border-t border-white/5">

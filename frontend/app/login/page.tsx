@@ -51,8 +51,11 @@ export default function LoginPage() {
 
       await refresh();
 
+      // Admins use the same login form, but land in the administration area.
+      if (data.user?.role === 'admin' || data.user?.is_admin === true) {
+        router.push('/admin');
       // If user hasn't set interests yet, redirect to onboarding
-      if (data.needsOnboarding) {
+      } else if (data.needsOnboarding) {
         router.push('/onboarding');
       } else {
         router.push('/');

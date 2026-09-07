@@ -38,6 +38,8 @@ export default function ProfilePage() {
     rsvp_confirmed: true,
     rsvp_approved: true,
     rsvp_rejected: true,
+    rsvp_cancelled: true,
+    new_attendee: true,
     membership_approved: true,
     membership_rejected: true,
   });
@@ -603,6 +605,18 @@ export default function ProfilePage() {
                 description="When the organizer cannot approve your event registration"
                 enabled={notifPrefs.rsvp_rejected}
                 onToggle={() => togglePref('rsvp_rejected')}
+              />
+              <PrefToggle
+                label="Registration Cancelled"
+                description="When you cancel your event registration (you and the organizer are notified)"
+                enabled={notifPrefs.rsvp_cancelled}
+                onToggle={() => togglePref('rsvp_cancelled')}
+              />
+              <PrefToggle
+                label="New Attendee (Organizer)"
+                description="When someone registers for your event"
+                enabled={notifPrefs.new_attendee}
+                onToggle={() => togglePref('new_attendee')}
               />
               <PrefToggle
                 label="Document Approved"

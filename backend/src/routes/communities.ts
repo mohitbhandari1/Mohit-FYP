@@ -657,6 +657,18 @@ router.post('/:id/membership-application', authMiddleware, async (req: AuthReque
       res.status(400).json({ error: 'Full name, email, and reason are required' });
       return;
     }
+    // ─── 10-digit phone validation ───
+    if (phone !== undefined && phone !== null && String(phone).trim() !== '') {
+      const digits = String(phone).replace(/\D/g, '');
+      const local = digits.length === 11 && digits.startsWith('0') ? digits.slice(1) : digits;
+      if (local.length !== 10) {
+        res.status(400).json({
+          error: 'Phone number must be exactly 10 digits',
+          message: 'Please enter a valid 10-digit phone number (e.g. 9876543210).',
+        });
+        return;
+      }
+    }
     // Check if already applied
     const existing = await query(
       'SELECT id, status FROM membership_applications WHERE user_id = $1 AND community_id = $2',

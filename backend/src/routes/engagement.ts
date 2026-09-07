@@ -17,8 +17,12 @@ import {
   answerRejectedEmail,
   communityJoinedEmail,
   communityLeftEmail,
+  rsvpCancelledEmail,
+  rsvpCancelledOrganizerEmail,
+  newRegistrationEmail,
+  newRegistrationRequestEmail,
 } from '../email';
-import { createNotification } from '../notificationHelper';
+import { createNotification, createNotificationsForUsers } from '../notificationHelper';
 
 const router = express.Router();
 
@@ -81,6 +85,20 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
     return res.status(400).json({ error: 'Status must be "attending" or "not_attending"' });
   }
 
+  // ─── 10-digit phone validation ───
+  // Accepts optional +, then digits/spaces/dashes/parentheses — must reduce to
+  // exactly 10 digits (local convention). Rejections list the offending field.
+  if (phone !== undefined && phone !== null && String(phone).trim() !== '') {
+    const digits = String(phone).replace(/\D/g, '');
+    const local = digits.length === 11 && digits.startsWith('0') ? digits.slice(1) : digits;
+    if (local.length !== 10) {
+      return res.status(400).json({
+        error: 'Phone number must be exactly 10 digits',
+        message: 'Please enter a valid 10-digit phone number (e.g. 9876543210).',
+      });
+    }
+  }
+
   // `answers` arrives as a JSON string in multipart form data
   let parsedAnswers: Record<string, any> = {};
   if (typeof answers === 'string' && answers) {
@@ -110,6 +128,23 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
       [req.userId, event_id]
     );
     const prevStatus = prevRsvp.rows[0]?.status;
+
+    // ─── One-time registration guard ───
+    // A user can only register ONCE per event. While an active registration
+    // exists (attending or pending), further "attending" attempts are rejected
+    // with 409 so the UI can show the "Already registered" popup. Cancelling
+    // (not_attending) is always allowed — the seat is released and re-registering
+    // afterwards is a fresh registration.
+    if (rsvpStatus === 'attending' && (prevStatus === 'attending' || prevStatus === 'pending')) {
+      return res.status(409).json({
+        error: 'Already registered for this event',
+        message: prevStatus === 'pending'
+          ? 'You already have a pending registration for this event. Please wait for organizer approval.'
+          : 'You are already registered for this event. Check My Events for details.',
+        already_registered: true,
+        status: prevStatus,
+      });
+    }
 
     // ─── Validate answers for required registration questions ───
     // (Must run BEFORE claiming a seat — a rejected RSVP must not take a seat.)
@@ -156,7 +191,11 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
     }
 
     for (const q of questions.rows) {
-      if (q.required) {
+      // Required-question validation only applies when REGISTERING (attending).
+      // When the user is cancelling (not_attending), we must never block the
+      // cancellation just because answers are missing — this is what broke the
+      // "Not Attending" button on events that had a required "Name" question.
+      if (q.required && rsvpStatus === 'attending') {
         const value = answerMap[String(q.id)] ?? '';
         if (typeof value !== 'string' || !value.trim()) {
           return res.status(400).json({
@@ -324,6 +363,107 @@ router.post('/rsvp', authMiddleware, uploadRsvpDocument.fields([
               `Your registration for ${eventTitle} is confirmed. See you there!`,
               `/events/${event_id}`,
               communityDetails.rows[0]?.logo || null
+            ).catch(() => {});
+          }
+        }
+      }
+
+      // ─── New registration: notify the ORGANIZER (both direct & pending) ───
+      // Fires only when a NEW registration lands (prevStatus was empty or a
+      // re-registration after cancellation) — never on duplicate attempts,
+      // which are blocked by the one-time registration guard above.
+      if (
+        (newStatus === 'attending' || newStatus === 'pending') &&
+        (prevStatus === undefined || prevStatus === null || prevStatus === 'not_attending' || prevStatus === 'rejected')
+      ) {
+        const [regEventDetails, regCommunityDetails] = await Promise.all([
+          query('SELECT event_date FROM events WHERE id = $1', [event_id]),
+          query('SELECT name, logo, owner_id FROM communities WHERE id = $1', [communityId]),
+        ]);
+        const regEventDate = regEventDetails.rows[0]?.event_date
+          ? new Date(regEventDetails.rows[0].event_date).toLocaleDateString('en-US', {
+              weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+            })
+          : 'TBA';
+        const regCommunityName = regCommunityDetails.rows[0]?.name || 'Community';
+        const regCommunityLogo = regCommunityDetails.rows[0]?.logo || null;
+        const regOwnerId = regCommunityDetails.rows[0]?.owner_id;
+
+        if (regOwnerId) {
+          const isPending = newStatus === 'pending';
+          const seatsRemaining = event.max_attendees != null ? Math.max(event.max_attendees - event.attendee_count, 0) : null;
+          const organizerRes = await query('SELECT name, email FROM users WHERE id = $1', [regOwnerId]);
+          const organizer = organizerRes.rows[0];
+          const organizerName = organizer?.name || 'Organizer';
+          const orgEmail = isPending
+            ? newRegistrationRequestEmail(organizerName, userName, eventTitle, regEventDate, regCommunityName, seatsRemaining)
+            : newRegistrationEmail(organizerName, userName, eventTitle, regEventDate, regCommunityName, seatsRemaining);
+          // Skip self-notification when the organizer registers for their own event
+          if (organizer && organizer.email && regOwnerId !== req.userId) {
+            sendEmail(organizer.email, orgEmail.subject, orgEmail.html).catch((err) =>
+              console.error('Failed to send organizer registration email:', err)
+            );
+            // In-app notification to the organizer
+            createNotification(
+              regOwnerId, 'new_attendee',
+              isPending ? `New Registration Request: ${eventTitle}` : `New Registration: ${eventTitle}`,
+              isPending
+                ? `${userName} requested to join ${eventTitle} (${regEventDate}). Approve or reject from the event page.`
+                : `${userName} registered for ${eventTitle} (${regEventDate}).`,
+              `/events/${event_id}`,
+              regCommunityLogo
+            ).catch(() => {});
+          }
+        }
+      }
+
+      // ─── Cancellation: user switched to not_attending (was attending or pending) ───
+      if (newStatus === 'not_attending' && (prevStatus === 'attending' || prevStatus === 'pending')) {
+        const [eventDetails, communityDetails] = await Promise.all([
+          query('SELECT event_date, location FROM events WHERE id = $1', [event_id]),
+          query('SELECT name, logo, owner_id FROM communities WHERE id = $1', [communityId]),
+        ]);
+        const eventDate = eventDetails.rows[0]?.event_date
+          ? new Date(eventDetails.rows[0].event_date).toLocaleDateString('en-US', {
+              weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+            })
+          : 'TBA';
+        const communityName = communityDetails.rows[0]?.name || 'Community';
+        const communityLogo = communityDetails.rows[0]?.logo || null;
+        const ownerId = communityDetails.rows[0]?.owner_id;
+
+        // 1) Email to the attendee (cancellation confirmation)
+        if (recipientEmail) {
+          const emailContent = rsvpCancelledEmail(userName, eventTitle, eventDate, communityName);
+          sendEmail(recipientEmail, emailContent.subject, emailContent.html).catch((err) =>
+            console.error('Failed to send RSVP cancelled email:', err)
+          );
+        }
+        // In-app notification to the attendee
+        if (req.userId) createNotification(
+          req.userId, 'rsvp_cancelled',
+          `Registration Cancelled: ${eventTitle}`,
+          `Your registration for ${eventTitle} on ${eventDate} has been cancelled.`,
+          `/events/${event_id}`,
+          communityLogo
+        ).catch(() => {});
+
+        // 2) Email to the organizer (owner)
+        if (ownerId) {
+          const organizerRes = await query('SELECT name, email FROM users WHERE id = $1', [ownerId]);
+          const organizer = organizerRes.rows[0];
+          if (organizer && organizer.email) {
+            const orgEmail = rsvpCancelledOrganizerEmail(organizer.name || 'Organizer', userName, eventTitle, eventDate, communityName);
+            sendEmail(organizer.email, orgEmail.subject, orgEmail.html).catch((err) =>
+              console.error('Failed to send organizer cancellation email:', err)
+            );
+            // In-app notification to the organizer
+            createNotification(
+              ownerId, 'rsvp_cancelled',
+              `Cancellation: ${eventTitle}`,
+              `${userName} has cancelled their registration for ${eventTitle} (${eventDate}).`,
+              `/events/${event_id}`,
+              communityLogo
             ).catch(() => {});
           }
         }
@@ -513,7 +653,7 @@ router.get('/rsvp/event/:eventId', authMiddleware, async (req: AuthRequest, res,
               r.document_url, r.document_name, r.document_status, r.document_reviewed_at,
               u.name, u.avatar_url
        FROM rsvps r JOIN users u ON r.user_id = u.id
-       WHERE r.event_id = $1
+       WHERE r.event_id = $1 AND r.status != 'not_attending'
        ORDER BY r.created_at DESC`,
       [eventId]
     );

@@ -26,6 +26,8 @@ const typeGroups: Record<string, string> = {
   rsvp_confirmed: 'Events',
   rsvp_approved: 'Events',
   rsvp_rejected: 'Events',
+  rsvp_cancelled: 'Events',
+  new_attendee: 'Events',
   document_approved: 'Events',
   document_rejected: 'Events',
   answer_approved: 'Events',
@@ -202,10 +204,17 @@ export default function NotificationsPage() {
           </svg>
         );
       case 'rsvp_rejected':
+      case 'rsvp_cancelled':
       case 'membership_rejected':
         return (
           <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+        );
+      case 'new_attendee':
+        return (
+          <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18 7v14m-8-6v6m-6-10v10a1 1 0 001 1h2a1 1 0 001-1V11a1 1 0 00-1-1H5a1 1 0 00-1 1zm10 0h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6a1 1 0 011-1zM3 21h18M4 4h16" />
           </svg>
         );
       case 'community_joined':

@@ -38,6 +38,8 @@ export default function EventDetailPage() {
   const [submittingRsvp, setSubmittingRsvp] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [showFullWarning, setShowFullWarning] = useState(false);
+  // "Already registered" popup state (one-time registration guard)
+  const [showAlreadyRegistered, setShowAlreadyRegistered] = useState(false);
   // Organizer per-attendee form review (shows all answers + uploaded files/images)
   const [reviewUserId, setReviewUserId] = useState<number | null>(null);
   const [reviewError, setReviewError] = useState('');
@@ -180,6 +182,13 @@ export default function EventDetailPage() {
         body: fd,
       });
       const data = await res.json().catch(() => null);
+      // One-time registration guard — show the "Already registered" popup
+      if (res.status === 409 || data?.already_registered) {
+        setRsvpStatus(data?.status || 'attending');
+        setShowRsvpQuestions(false);
+        setShowAlreadyRegistered(true);
+        return;
+      }
       if (res.ok) {
         // Only adjust counters when the status actually changed
         // (re-clicking the same status is a no-op on the backend)
@@ -941,6 +950,38 @@ export default function EventDetailPage() {
         </div>
       )}
 
+      {/* Already Registered Popup (one-time registration guard) */}
+      {showAlreadyRegistered && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" onClick={() => setShowAlreadyRegistered(false)} />
+          <div className="relative w-full max-w-md rounded-2xl border border-amber-500/25 bg-slate-900 shadow-2xl shadow-black/50 p-6 sm:p-8 text-center animate-scale-in">
+            <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+              <svg className="w-8 h-8 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-bold text-slate-100 mb-2">Already Registered</h3>
+            <p className="text-sm text-slate-400 leading-relaxed mb-6">
+              {rsvpStatus === 'pending'
+                ? 'You already have a pending registration for this event. Please wait for the organizer\u2019s approval.'
+                : 'You are already registered for this event. You can view it under My Events, or cancel your registration to free up your seat.'}
+            </p>
+            <div className="flex gap-3">
+              <Link href="/my-events"
+                className="flex-1 px-5 py-3 rounded-xl border border-white/10 text-slate-300 font-medium hover:text-white hover:bg-white/5 transition-all text-center">
+                My Events
+              </Link>
+              <button
+                onClick={() => setShowAlreadyRegistered(false)}
+                className="flex-1 px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-semibold shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 transition-all"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* RSVP Questions Modal */}
       {showRsvpQuestions && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1105,6 +1146,18 @@ export default function EventDetailPage() {
                     if (missingFileAnswer) {
                       setRsvpError('Please upload the required file/image for all file upload questions.');
                       return;
+                    }
+                    // ─── 10-digit phone validation for phone-style questions ───
+                    const phoneQuestion = (event?.questions || []).find((q: any) =>
+                      /phone|mobile/i.test(q.question) && q.type !== 'file' && rsvpAnswers[String(q.id)]?.trim()
+                    );
+                    if (phoneQuestion) {
+                      const digits = rsvpAnswers[String(phoneQuestion.id)].replace(/\D/g, '');
+                      const local = digits.length === 11 && digits.startsWith('0') ? digits.slice(1) : digits;
+                      if (local.length !== 10) {
+                        setRsvpError(`Please enter a valid 10-digit phone number for "${phoneQuestion.question}" (e.g. 9876543210).`);
+                        return;
+                      }
                     }
                     submitRsvp('attending', rsvpAnswers);
                   }}

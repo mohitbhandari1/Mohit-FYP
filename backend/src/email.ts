@@ -585,6 +585,148 @@ export function rsvpDocumentRejectedEmail(
   };
 }
 
+// ─── New Registration (Organizer) Email Templates ───
+
+export function newRegistrationEmail(
+  organizerName: string,
+  attendeeName: string,
+  eventTitle: string,
+  eventDate: string,
+  communityName: string,
+  seatsRemaining: number | null
+): { subject: string; html: string } {
+  return {
+    subject: `New Registration: ${attendeeName} → ${eventTitle}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+        <h1 style="color: #22c55e; font-size: 24px; margin-bottom: 10px;">New Attendee! 🎉</h1>
+        <p style="font-size: 16px; line-height: 1.6;">Hi <strong>${organizerName}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6;">
+          <strong>${attendeeName}</strong> has registered for <strong>${eventTitle}</strong>.
+        </p>
+        <div style="background: #1e293b; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #22c55e;">
+          <p style="font-size: 15px; margin: 8px 0;"><strong>👤 Attendee:</strong> ${attendeeName}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>📅 Event Date:</strong> ${eventDate}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>🏢 Community:</strong> ${communityName}</p>
+          ${seatsRemaining != null ? `<p style="font-size: 15px; margin: 8px 0;"><strong>💺 Seats Remaining:</strong> ${seatsRemaining}</p>` : ''}
+        </div>
+        <p style="font-size: 14px; color: #94a3b8; text-align: center;">
+          The attendee has been added to your event's attending list.
+        </p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${FRONTEND_URL}" style="display: inline-block; background: #22c55e; color: #0f172a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;">View Event</a>
+        </div>
+        <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
+        <p style="font-size: 13px; color: #64748b; text-align: center;">Smart Connects - Community & Event Discovery Platform</p>
+      </div>
+    `,
+  };
+}
+
+export function newRegistrationRequestEmail(
+  organizerName: string,
+  attendeeName: string,
+  eventTitle: string,
+  eventDate: string,
+  communityName: string,
+  seatsRemaining: number | null
+): { subject: string; html: string } {
+  return {
+    subject: `Registration Request: ${attendeeName} → ${eventTitle}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+        <h1 style="color: #f59e0b; font-size: 24px; margin-bottom: 10px;">New Registration Request 📋</h1>
+        <p style="font-size: 16px; line-height: 1.6;">Hi <strong>${organizerName}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6;">
+          <strong>${attendeeName}</strong> has requested to join <strong>${eventTitle}</strong>. Your approval is required.
+        </p>
+        <div style="background: #1e293b; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b;">
+          <p style="font-size: 15px; margin: 8px 0;"><strong>👤 Attendee:</strong> ${attendeeName}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>📅 Event Date:</strong> ${eventDate}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>🏢 Community:</strong> ${communityName}</p>
+        </div>
+        <p style="font-size: 14px; color: #94a3b8; text-align: center;">
+          Please review and approve or reject this request from the event page.
+        </p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${FRONTEND_URL}" style="display: inline-block; background: #f59e0b; color: #0f172a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;">Review Request</a>
+        </div>
+        <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
+        <p style="font-size: 13px; color: #64748b; text-align: center;">Smart Connects - Community & Event Discovery Platform</p>
+      </div>
+    `,
+  };
+}
+
+// ─── RSVP Cancellation Email Templates ───
+
+export function rsvpCancelledEmail(
+  name: string,
+  eventTitle: string,
+  eventDate: string,
+  communityName: string
+): { subject: string; html: string } {
+  return {
+    subject: `Registration Cancelled: ${eventTitle}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+        <h1 style="color: #f87171; font-size: 24px; margin-bottom: 10px;">Registration Cancelled</h1>
+        <p style="font-size: 16px; line-height: 1.6;">Hi <strong>${name}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6;">
+          Your registration for <strong>${eventTitle}</strong> has been cancelled as requested. You are no longer on the attending list.
+        </p>
+        <div style="background: #1e293b; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f87171;">
+          <p style="font-size: 15px; margin: 8px 0;"><strong>📅 Date:</strong> ${eventDate}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>🏢 Community:</strong> ${communityName}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>❌ Status:</strong> <span style="color: #f87171;">Cancelled</span></p>
+        </div>
+        <p style="font-size: 14px; color: #94a3b8; text-align: center;">
+          Changed your mind? You can re-register for the event any time (subject to seat availability).
+        </p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${FRONTEND_URL}" style="display: inline-block; background: #f87171; color: #0f172a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;">View Event</a>
+        </div>
+        <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
+        <p style="font-size: 13px; color: #64748b; text-align: center;">Smart Connects - Community & Event Discovery Platform</p>
+      </div>
+    `,
+  };
+}
+
+export function rsvpCancelledOrganizerEmail(
+  organizerName: string,
+  attendeeName: string,
+  eventTitle: string,
+  eventDate: string,
+  communityName: string
+): { subject: string; html: string } {
+  return {
+    subject: `Cancellation: ${attendeeName} left ${eventTitle}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+        <h1 style="color: #f59e0b; font-size: 24px; margin-bottom: 10px;">Attendee Cancellation</h1>
+        <p style="font-size: 16px; line-height: 1.6;">Hi <strong>${organizerName}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6;">
+          <strong>${attendeeName}</strong> has cancelled their registration for <strong>${eventTitle}</strong>.
+        </p>
+        <div style="background: #1e293b; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b;">
+          <p style="font-size: 15px; margin: 8px 0;"><strong>👤 Attendee:</strong> ${attendeeName}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>📅 Event Date:</strong> ${eventDate}</p>
+          <p style="font-size: 15px; margin: 8px 0;"><strong>🏢 Community:</strong> ${communityName}</p>
+        </div>
+        <p style="font-size: 14px; color: #94a3b8; text-align: center;">
+          The seat has been released and is now available for other attendees.
+        </p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${FRONTEND_URL}" style="display: inline-block; background: #f59e0b; color: #0f172a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;">View Event</a>
+        </div>
+        <hr style="border: 1px solid #1e293b; margin: 30px 0;" />
+        <p style="font-size: 13px; color: #64748b; text-align: center;">Smart Connects - Community & Event Discovery Platform</p>
+      </div>
+    `,
+  };
+}
+
 // ─── Membership Application Emails ───
 
 export function membershipApprovedEmail(

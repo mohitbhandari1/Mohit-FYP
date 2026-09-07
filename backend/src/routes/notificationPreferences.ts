@@ -17,6 +17,8 @@ const DEFAULT_PREFS = {
   rsvp_confirmed: true,
   rsvp_approved: true,
   rsvp_rejected: true,
+  rsvp_cancelled: true,
+  new_attendee: true,
   membership_approved: true,
   membership_rejected: true,
 };

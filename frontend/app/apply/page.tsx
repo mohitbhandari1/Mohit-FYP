@@ -62,6 +62,16 @@ export default function ApplyPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // ─── 10-digit phone validation ───
+    if (formData.contact_phone?.trim()) {
+      const digits = formData.contact_phone.replace(/\D/g, '');
+      const local = digits.length === 11 && digits.startsWith('0') ? digits.slice(1) : digits;
+      if (local.length !== 10) {
+        setError('Contact phone must be exactly 10 digits (e.g. 9876543210).');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+    }
     setSubmitting(true);
     setError('');
 
@@ -202,8 +212,23 @@ export default function ApplyPage() {
             </div>
             <div>
               <label className={labelClass}>Contact Phone <span className="text-red-400">*</span></label>
-              <input type="tel" name="contact_phone" value={formData.contact_phone} onChange={handleChange} required
-                placeholder="+1 234 555 8900" className={inputClass} />
+              <input type="tel" name="contact_phone" value={formData.contact_phone}
+                onChange={(e) => {
+                  // Allow only digits, spaces, dashes, parentheses (max 14 chars)
+                  const v = e.target.value.replace(/[^0-9\s\-()+]/g, '').slice(0, 14);
+                  setFormData((prev: any) => ({ ...prev, contact_phone: v }));
+                }}
+                required
+                placeholder="9876543210 (10 digits)" className={inputClass} />
+              {formData.contact_phone && (() => {
+                const digits = formData.contact_phone.replace(/\D/g, '');
+                const ok = (digits.length === 11 && digits.startsWith('0') ? digits.slice(1) : digits).length === 10;
+                return (
+                  <p className={`text-xs mt-1 ${ok ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {ok ? '✓ Valid phone number' : `${digits.length}/10 digits`}
+                  </p>
+                );
+              })()}
             </div>
           </div>
         </div>
