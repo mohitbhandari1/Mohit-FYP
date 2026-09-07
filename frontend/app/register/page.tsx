@@ -6,6 +6,13 @@ import { useRouter } from 'next/navigation';
 import Navbar from '../components/Navbar';
 import Chatbot from '../components/Chatbot';
 import { apiFetch } from '../lib/auth';
+import {
+  registerSchema,
+  verificationCodeSchema,
+  zodToFieldErrors,
+  zodToFirstError,
+  type FieldErrors,
+} from '../lib/validation';
 
 function getPasswordStrength(password: string): { score: number; label: string; color: string } {
   let score = 0;
@@ -32,6 +39,7 @@ export default function RegisterPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   // Verification code flow state
   const [step, setStep] = useState<'form' | 'verify'>('form');
@@ -47,6 +55,14 @@ export default function RegisterPage() {
 
   const strength = password ? getPasswordStrength(password) : null;
 
+  const clearFieldError = (field: keyof FieldErrors) =>
+    setFieldErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+
   // Countdown timer for resend
   useEffect(() => {
     if (step !== 'verify' || resendTimer <= 0) return;
@@ -59,22 +75,15 @@ export default function RegisterPage() {
     e.preventDefault();
     setError('');
 
-    if (!name || !email || !password || !confirmPassword) {
-      setError('Please fill in all required fields.');
+    // Zod validation
+    const parsed = registerSchema.safeParse({ name, email, password, confirmPassword, agreeTerms });
+    if (!parsed.success) {
+      const errs = zodToFieldErrors(parsed.error);
+      setFieldErrors(errs);
+      setError(zodToFirstError(parsed.error));
       return;
     }
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.');
-      return;
-    }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
-      return;
-    }
-    if (!agreeTerms) {
-      setError('You must agree to the terms and conditions.');
-      return;
-    }
+    setFieldErrors({});
 
     setLoading(true);
     try {
@@ -140,11 +149,12 @@ export default function RegisterPage() {
 
   // Submit verification code
   const handleVerifyCode = async () => {
-    const codeStr = code.join('');
-    if (codeStr.length !== 6) {
-      setVerifyError('Please enter the complete 6-digit code.');
+    const parsedCode = verificationCodeSchema.safeParse({ code: code.join('') });
+    if (!parsedCode.success) {
+      setVerifyError(zodToFirstError(parsedCode.error));
       return;
     }
+    const codeStr = parsedCode.data.code;
 
     setVerifyLoading(true);
     setVerifyError('');
@@ -258,12 +268,18 @@ export default function RegisterPage() {
                         id="name"
                         type="text"
                         value={name}
-                        onChange={(e) => setName(e.target.value)}
+                        onChange={(e) => {
+                          setName(e.target.value);
+                          clearFieldError('name');
+                        }}
                         placeholder="John Doe"
-                        className="input-glass w-full pl-12 pr-4 py-3.5 rounded-xl"
+                        className={`input-glass w-full pl-12 pr-4 py-3.5 rounded-xl ${fieldErrors.name ? 'border-red-500/50' : ''}`}
                         autoComplete="name"
                       />
                     </div>
+                    {fieldErrors.name && (
+                      <p className="mt-1.5 text-xs text-red-400">{fieldErrors.name}</p>
+                    )}
                   </div>
 
                   {/* Email field */}
@@ -281,12 +297,18 @@ export default function RegisterPage() {
                         id="email"
                         type="email"
                         value={email}
-                        onChange={(e) => setEmail(e.target.value)}
+                        onChange={(e) => {
+                          setEmail(e.target.value);
+                          clearFieldError('email');
+                        }}
                         placeholder="you@example.com"
-                        className="input-glass w-full pl-12 pr-4 py-3.5 rounded-xl"
+                        className={`input-glass w-full pl-12 pr-4 py-3.5 rounded-xl ${fieldErrors.email ? 'border-red-500/50' : ''}`}
                         autoComplete="email"
                       />
                     </div>
+                    {fieldErrors.email && (
+                      <p className="mt-1.5 text-xs text-red-400">{fieldErrors.email}</p>
+                    )}
                   </div>
 
                   {/* Password field */}
@@ -304,9 +326,12 @@ export default function RegisterPage() {
                         id="password"
                         type={showPassword ? 'text' : 'password'}
                         value={password}
-                        onChange={(e) => setPassword(e.target.value)}
+                        onChange={(e) => {
+                          setPassword(e.target.value);
+                          clearFieldError('password');
+                        }}
                         placeholder="Min. 6 characters"
-                        className="input-glass w-full pl-12 pr-12 py-3.5 rounded-xl"
+                        className={`input-glass w-full pl-12 pr-12 py-3.5 rounded-xl ${fieldErrors.password ? 'border-red-500/50' : ''}`}
                         autoComplete="new-password"
                       />
                       <button
@@ -340,16 +365,18 @@ export default function RegisterPage() {
                               }`}
                             />
                           ))}
-                        </div>
-                        <p className={`text-xs ${
+                        </div>                        <p className={`text-xs ${
                           strength.score <= 1 ? 'text-red-400' :
                           strength.score <= 2 ? 'text-amber-400' :
                           strength.score <= 3 ? 'text-yellow-400' :
                           'text-emerald-400'
-                        }`}>
+                       }`}>
                           {strength.label}
                         </p>
                       </div>
+                    )}
+                    {fieldErrors.password && (
+                      <p className="mt-1.5 text-xs text-red-400">{fieldErrors.password}</p>
                     )}
                   </div>
 
@@ -368,9 +395,12 @@ export default function RegisterPage() {
                         id="confirmPassword"
                         type="password"
                         value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        onChange={(e) => {
+                          setConfirmPassword(e.target.value);
+                          clearFieldError('confirmPassword');
+                        }}
                         placeholder="Re-enter your password"
-                        className="input-glass w-full pl-12 pr-4 py-3.5 rounded-xl"
+                        className={`input-glass w-full pl-12 pr-4 py-3.5 rounded-xl ${fieldErrors.confirmPassword ? 'border-red-500/50' : ''}`}
                         autoComplete="new-password"
                       />
                       {confirmPassword && (
@@ -387,6 +417,9 @@ export default function RegisterPage() {
                         </div>
                       )}
                     </div>
+                    {fieldErrors.confirmPassword && (
+                      <p className="mt-1.5 text-xs text-red-400">{fieldErrors.confirmPassword}</p>
+                    )}
                   </div>
 
                   {/* Terms checkbox */}
@@ -396,7 +429,10 @@ export default function RegisterPage() {
                         id="terms"
                         type="checkbox"
                         checked={agreeTerms}
-                        onChange={(e) => setAgreeTerms(e.target.checked)}
+                        onChange={(e) => {
+                          setAgreeTerms(e.target.checked);
+                          clearFieldError('agreeTerms');
+                        }}
                         className="w-4.5 h-4.5 rounded border-white/10 bg-white/5 text-amber-500 focus:ring-amber-500/30 focus:ring-offset-0 cursor-pointer"
                       />
                     </div>
@@ -411,6 +447,9 @@ export default function RegisterPage() {
                       </span>
                     </label>
                   </div>
+                  {fieldErrors.agreeTerms && (
+                    <p className="mt-1.5 text-xs text-red-400">{fieldErrors.agreeTerms}</p>
+                  )}
 
                   {/* Submit button */}
                   <button

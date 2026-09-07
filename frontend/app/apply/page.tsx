@@ -6,6 +6,15 @@ import Link from 'next/link';
 import Navbar from '../components/Navbar';
 import Chatbot from '../components/Chatbot';
 import { apiFetch } from '../lib/auth';
+import {
+  organizerApplicationSchema,
+  zodToFieldErrors,
+  zodToFirstError,
+  validateApplicationFile,
+  CERTIFICATE_FILE_EXTENSIONS,
+  LOGO_FILE_EXTENSIONS,
+  type FieldErrors,
+} from '../lib/validation';
 
 export default function ApplyPage() {
   const [formData, setFormData] = useState({
@@ -27,6 +36,7 @@ export default function ApplyPage() {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [success, setSuccess] = useState(false);
   const [existingApp, setExistingApp] = useState<any>(null);
   const [ownedCommunities, setOwnedCommunities] = useState<any[]>([]);
@@ -56,22 +66,69 @@ export default function ApplyPage() {
     checkExisting();
   }, [router]);
 
+  const clearFieldError = (field: string) =>
+    setFieldErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+    clearFieldError(e.target.name);
+  };
+
+  const handleCertificateChange = (file: File | null) => {
+    setError('');
+    setCertificateFile(file);
+    if (!file) return;
+    const fileError = validateApplicationFile(file, CERTIFICATE_FILE_EXTENSIONS);
+    if (fileError) {
+      setFieldErrors((prev) => ({ ...prev, certificate_file: fileError }));
+      setCertificateFile(null);
+    } else {
+      clearFieldError('certificate_file');
+    }
+  };
+
+  const handleLogoChange = (file: File | null) => {
+    setError('');
+    setLogoFile(file);
+    if (!file) return;
+    const fileError = validateApplicationFile(file, LOGO_FILE_EXTENSIONS);
+    if (fileError) {
+      setFieldErrors((prev) => ({ ...prev, logo_file: fileError }));
+      setLogoFile(null);
+    } else {
+      clearFieldError('logo_file');
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // ─── 10-digit phone validation ───
-    if (formData.contact_phone?.trim()) {
-      const digits = formData.contact_phone.replace(/\D/g, '');
-      const local = digits.length === 11 && digits.startsWith('0') ? digits.slice(1) : digits;
-      if (local.length !== 10) {
-        setError('Contact phone must be exactly 10 digits (e.g. 9876543210).');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        return;
-      }
+    setError('');
+
+    // ─── Zod validation ───
+    const parsed = organizerApplicationSchema.safeParse(formData);
+    if (!parsed.success) {
+      const errs = zodToFieldErrors(parsed.error);
+      setFieldErrors(errs);
+      setError(zodToFirstError(parsed.error));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
     }
+
+    if (!certificateFile) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        certificate_file: 'Please upload a certificate or proof document.',
+      }));
+      setError('Please upload a certificate or proof document.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
     setSubmitting(true);
     setError('');
 
@@ -112,6 +169,12 @@ export default function ApplyPage() {
   const inputClass = "w-full rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 transition-all";
   const labelClass = "block text-sm font-medium text-slate-300 mb-1.5";
 
+  const errBorder = (field: string) => (fieldErrors[field] ? ' border-red-500/60' : '');
+  const FieldError = ({ field }: { field: string }) =>
+    fieldErrors[field] ? (
+      <p className="mt-1 text-xs text-red-400">{fieldErrors[field]}</p>
+    ) : null;
+
   // Reusable application form — shown to new applicants, and to organizers
   // applying for an additional community
   const renderForm = (
@@ -130,11 +193,12 @@ export default function ApplyPage() {
               <div>
                 <label className={labelClass}>Organization Name <span className="text-red-400">*</span></label>
                 <input type="text" name="organization_name" value={formData.organization_name} onChange={handleChange} required
-                  placeholder="Your organization" className={inputClass} />
+                  placeholder="Your organization" className={`${inputClass}${errBorder('organization_name')}`} />
+                <FieldError field="organization_name" />
               </div>
               <div>
                 <label className={labelClass}>Organization Type <span className="text-red-400">*</span></label>
-                <select name="organization_type" value={formData.organization_type} onChange={handleChange} required className={inputClass}>
+                <select name="organization_type" value={formData.organization_type} onChange={handleChange} required className={`${inputClass}${errBorder('organization_type')}`}>
                   <option value="" className="bg-slate-900">Select type</option>
                   <option value="student_club" className="bg-slate-900">Student Club</option>
                   <option value="ngo" className="bg-slate-900">NGO</option>
@@ -142,18 +206,20 @@ export default function ApplyPage() {
                   <option value="individual" className="bg-slate-900">Individual</option>
                   <option value="other" className="bg-slate-900">Other</option>
                 </select>
+                <FieldError field="organization_type" />
               </div>
             </div>
             <div>
-              <label className={labelClass}>Description <span className="text-red-400">*</span></label>
-              <textarea name="description" value={formData.description} onChange={handleChange} required
-                placeholder="Tell us about your organization..." rows={3} className={`${inputClass} resize-none`} />
+              <label className={labelClass}>Description <span className="text-red-400">*</span></label>                <textarea name="description" value={formData.description} onChange={handleChange} required
+                  placeholder="Tell us about your organization..." rows={3} className={`${inputClass} resize-none${errBorder('description')}`} />
+                <FieldError field="description" />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className={labelClass}>Website</label>
                 <input type="url" name="website" value={formData.website} onChange={handleChange}
-                  placeholder="https://..." className={inputClass} />
+                  placeholder="https://..." className={`${inputClass}${errBorder('website')}`} />
+                <FieldError field="website" />
               </div>
               <div>
                 <label className={labelClass}>Social Media</label>
@@ -163,8 +229,9 @@ export default function ApplyPage() {
             </div>
             <div>
               <label className={labelClass}>Location</label>
-              <input type="text" name="location" value={formData.location} onChange={handleChange}
-                placeholder="City, Country" className={inputClass} />
+                <input type="text" name="location" value={formData.location} onChange={handleChange}
+                  placeholder="City, Country" className={`${inputClass}${errBorder('location')}`} />
+                <FieldError field="location" />
             </div>
           </div>
         </div>
@@ -175,28 +242,30 @@ export default function ApplyPage() {
           <div className="space-y-4">
             <div>
               <label className={labelClass}>Why do you want to be an organizer? <span className="text-red-400">*</span></label>
-              <textarea name="reason" value={formData.reason} onChange={handleChange} required
-                placeholder="Explain your motivation..." rows={3} className={`${inputClass} resize-none`} />
+                <textarea name="reason" value={formData.reason} onChange={handleChange} required
+                  placeholder="Explain your motivation..." rows={3} className={`${inputClass} resize-none${errBorder('reason')}`} />
+                <FieldError field="reason" />
             </div>
             <div>
               <label className={labelClass}>Past Experience</label>
-              <textarea name="experience" value={formData.experience} onChange={handleChange}
-                placeholder="Share any relevant experience in organizing events or communities..." rows={3} className={`${inputClass} resize-none`} />
+                <textarea name="experience" value={formData.experience} onChange={handleChange}
+                  placeholder="Share any relevant experience in organizing events or communities..." rows={3} className={`${inputClass} resize-none${errBorder('experience')}`} />
+                <FieldError field="experience" />
             </div>
             <div>
-              <label className={labelClass}>Goals</label>
-              <textarea name="goals" value={formData.goals} onChange={handleChange}
-                placeholder="What do you hope to achieve?" rows={2} className={`${inputClass} resize-none`} />
+              <label className={labelClass}>Goals</label>                <textarea name="goals" value={formData.goals} onChange={handleChange}
+                  placeholder="What do you hope to achieve?" rows={2} className={`${inputClass} resize-none${errBorder('goals')}`} />
+                <FieldError field="goals" />
             </div>
             <div>
-              <label className={labelClass}>Target Audience</label>
-              <input type="text" name="target_audience" value={formData.target_audience} onChange={handleChange}
-                placeholder="Who will your community serve?" className={inputClass} />
+              <label className={labelClass}>Target Audience</label>                <input type="text" name="target_audience" value={formData.target_audience} onChange={handleChange}
+                  placeholder="Who will your community serve?" className={`${inputClass}${errBorder('target_audience')}`} />
+                <FieldError field="target_audience" />
             </div>
             <div>
-              <label className={labelClass}>Planned Activities</label>
-              <textarea name="planned_activities" value={formData.planned_activities} onChange={handleChange}
-                placeholder="What kind of events/activities will you organize?" rows={2} className={`${inputClass} resize-none`} />
+              <label className={labelClass}>Planned Activities</label>                <textarea name="planned_activities" value={formData.planned_activities} onChange={handleChange}
+                  placeholder="What kind of events/activities will you organize?" rows={2} className={`${inputClass} resize-none${errBorder('planned_activities')}`} />
+                <FieldError field="planned_activities" />
             </div>
           </div>
         </div>
@@ -206,20 +275,21 @@ export default function ApplyPage() {
           <h3 className="text-lg font-semibold text-slate-200 mb-4">Contact Information</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className={labelClass}>Contact Email <span className="text-red-400">*</span></label>
-              <input type="email" name="contact_email" value={formData.contact_email} onChange={handleChange} required
-                placeholder="contact@org.com" className={inputClass} />
+              <label className={labelClass}>Contact Email <span className="text-red-400">*</span></label>                <input type="email" name="contact_email" value={formData.contact_email} onChange={handleChange} required
+                  placeholder="contact@org.com" className={`${inputClass}${errBorder('contact_email')}`} />
+                <FieldError field="contact_email" />
             </div>
             <div>
-              <label className={labelClass}>Contact Phone <span className="text-red-400">*</span></label>
-              <input type="tel" name="contact_phone" value={formData.contact_phone}
-                onChange={(e) => {
-                  // Allow only digits, spaces, dashes, parentheses (max 14 chars)
-                  const v = e.target.value.replace(/[^0-9\s\-()+]/g, '').slice(0, 14);
-                  setFormData((prev: any) => ({ ...prev, contact_phone: v }));
-                }}
-                required
-                placeholder="9876543210 (10 digits)" className={inputClass} />
+              <label className={labelClass}>Contact Phone <span className="text-red-400">*</span></label>                <input type="tel" name="contact_phone" value={formData.contact_phone}
+                  onChange={(e) => {
+                    // Allow only digits, spaces, dashes, parentheses (max 14 chars)
+                    const v = e.target.value.replace(/[^0-9\s\-()+]/g, '').slice(0, 14);
+                    setFormData((prev: any) => ({ ...prev, contact_phone: v }));
+                    clearFieldError('contact_phone');
+                  }}
+                  required
+                  placeholder="9876543210 (10 digits)" className={`${inputClass}${errBorder('contact_phone')}`} />
+                <FieldError field="contact_phone" />
               {formData.contact_phone && (() => {
                 const digits = formData.contact_phone.replace(/\D/g, '');
                 const ok = (digits.length === 11 && digits.startsWith('0') ? digits.slice(1) : digits).length === 10;
@@ -240,16 +310,18 @@ export default function ApplyPage() {
             <div>
               <label className={labelClass}>Certificate / Proof <span className="text-red-400">*</span></label>
               <input type="file" accept=".pdf,.jpg,.jpeg,.png" required
-                onChange={(e) => setCertificateFile(e.target.files?.[0] || null)}
+                onChange={(e) => handleCertificateChange(e.target.files?.[0] || null)}
                 className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer" />
-              <p className="mt-1 text-xs text-slate-500">PDF, JPG, PNG</p>
+              <p className="mt-1 text-xs text-slate-500">PDF, JPG, PNG (max 3 MB)</p>
+              <FieldError field="certificate_file" />
             </div>
             <div>
               <label className={labelClass}>Organization Logo</label>
               <input type="file" accept=".jpg,.jpeg,.png,.svg"
-                onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
+                onChange={(e) => handleLogoChange(e.target.files?.[0] || null)}
                 className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-amber-500/10 file:text-amber-400 hover:file:bg-amber-500/20 file:cursor-pointer" />
-              <p className="mt-1 text-xs text-slate-500">JPG, PNG, SVG</p>
+              <p className="mt-1 text-xs text-slate-500">JPG, PNG, SVG (max 3 MB)</p>
+              <FieldError field="logo_file" />
             </div>
           </div>
         </div>
