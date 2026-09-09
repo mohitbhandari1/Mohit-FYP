@@ -281,14 +281,24 @@ export default function CommunityDetailPage() {
               {community.banner_image && (
                 <img src={`${BACKEND_URL}${community.banner_image}`} alt={community.name} className="w-full h-full object-cover" />
               )}
-              {!community.banner_image && community.logo && (
-                <div className="w-full h-full flex items-center justify-center p-6">
-                  <img src={`${BACKEND_URL}${community.logo}`} alt={community.name} className="max-h-full max-w-full object-contain opacity-40" />
-                </div>
-              )}
             </div>
             <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/30 to-transparent" />
-            <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8">
+            {/* Club logo chip — painted ABOVE the black gradient so it stays fully visible.
+                Falls back to a default initial-letter logo when none is uploaded. */}
+            <div
+              className={`absolute bottom-4 right-4 sm:bottom-6 sm:right-8 z-10 w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden border-2 border-white/25 shadow-xl shadow-black/40 ring-1 ring-black/30 flex items-center justify-center ${
+                community.logo ? 'bg-slate-900' : 'bg-gradient-to-br from-amber-500 to-orange-600'
+              }`}
+            >
+              {community.logo ? (
+                <img src={`${BACKEND_URL}${community.logo}`} alt={`${community.name} logo`} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-xl sm:text-2xl font-bold text-white select-none" aria-hidden="true">
+                  {(community.name || 'C').charAt(0).toUpperCase()}
+                </span>
+              )}
+            </div>
+            <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 pr-24 sm:pr-32">
               {community.category && (
                 <span className="inline-block px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/20 text-xs font-medium text-orange-300 mb-3">
                   {community.category}

@@ -388,9 +388,7 @@ router.post('/verify-reset-code', async (req, res, next) => {
       return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
     }
 
-    // Mark as used
-    await query('UPDATE verification_codes SET used = TRUE WHERE id = $1', [record.id]);
-
+    // Do NOT mark the code as used here — it is consumed by /reset-password.
     res.json({ message: 'Code verified successfully. You can now set a new password.' });
   } catch (error) {
     next(error);

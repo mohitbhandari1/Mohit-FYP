@@ -121,6 +121,12 @@ export default function EventDetailPage() {
             if (me.id === eventData.community_owner_id || me.role === 'admin') {
               const attRes = await apiFetch(`/api/engagement/rsvp/event/${id}`);
               if (attRes.ok) setAttendees(await attRes.json());
+              // Opening the event page marks its registration requests as
+              // "viewed" — this clears the red unread count on the dashboards
+              apiFetch('/api/engagement/rsvp/requests/view', {
+                method: 'POST',
+                body: JSON.stringify({ event_id: parseInt(id) }),
+              }).catch(() => {});
             }
           }
         } else { router.push('/events'); }

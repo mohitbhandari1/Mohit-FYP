@@ -29,6 +29,18 @@ interface PendingRsvpRequest {
   created_at: string;
 }
 
+interface EventRequestSummary {
+  event_id: number;
+  event_title: string;
+  event_date: string;
+  community_name: string;
+  attendee_count: number;
+  max_attendees: number | null;
+  pending_count: number;
+  unread_count: number;
+  viewed: boolean;
+}
+
 export default function OrganizerDashboard() {
   const [communities, setCommunities] = useState<any[]>([]);
   const [selectedCommunity, setSelectedCommunity] = useState<any>(null);
@@ -43,11 +55,16 @@ export default function OrganizerDashboard() {
   const [loadingRequests, setLoadingRequests] = useState(false);
   const [processingRequest, setProcessingRequest] = useState<string | null>(null); // `${event_id}-${user_id}`
 
-  // Fetch pending registration requests across all of the organizer's events
+  // Event-level request summaries (counts only — applicant details stay private
+  // until the organizer opens the event details page)
+  const [eventRequests, setEventRequests] = useState<EventRequestSummary[]>([]);
+
+  // Fetch pending registration request summaries for all of the organizer's events
   const fetchPendingRequests = useCallback(async () => {
-    if (!myEvents.length) { setPendingRequests([]); return; }
+    if (!myEvents.length) { setPendingRequests([]); setEventRequests([]); return; }
     setLoadingRequests(true);
     try {
+      // Keep the legacy per-person fetch so the tab badge count stays correct
       const results = await Promise.all(
         myEvents.map(async (event: any) => {
           const res = await apiFetch(`/api/engagement/rsvp/event/${event.id}`);
@@ -63,6 +80,13 @@ export default function OrganizerDashboard() {
         })
       );
       setPendingRequests(results.flat());
+
+      // Event-level summary with unread (red badge) counts
+      const sumRes = await apiFetch('/api/engagement/rsvp/requests/summary');
+      if (sumRes.ok) {
+        const summary = await sumRes.json();
+        setEventRequests(Array.isArray(summary) ? summary : []);
+      }
     } catch { /* silent */ }
     setLoadingRequests(false);
   }, [myEvents]);
@@ -689,57 +713,54 @@ export default function OrganizerDashboard() {
                         <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-10 flex justify-center">
                           <div className="w-8 h-8 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
                         </div>
-                      ) : pendingRequests.length === 0 ? (
+                      ) : eventRequests.length === 0 ? (
                         <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-10 text-center">
                           <div className="text-4xl mb-3">📭</div>
                           <p className="text-slate-300 font-medium">No pending requests</p>
-                          <p className="text-sm text-slate-500 mt-1">When someone requests to join one of your events, it will appear here.</p>
+                          <p className="text-sm text-slate-500 mt-1">When someone requests to join one of your events, you&apos;ll get a notification and it will appear here.</p>
                         </div>
                       ) : (
-                        pendingRequests.map((req) => (
-                          <div key={`${req.event_id}-${req.user_id}`} className="rounded-2xl border border-amber-500/10 bg-white/[0.02] backdrop-blur-xl p-5">
+                        /* Per-event cards — no applicant details here. Open the event
+                           page to see WHO applied and approve/reject from there. */
+                        eventRequests.map((er) => (
+                          <Link
+                            key={er.event_id}
+                            href={`/events/${er.event_id}`}
+                          className="block rounded-2xl border border-amber-500/10 bg-white/[0.02] backdrop-blur-xl p-5 hover:border-amber-500/30 hover:bg-white/[0.04] transition-all"
+                          >
                             <div className="flex items-center gap-4">
-                              {/* Avatar */}
-                              <div className="w-11 h-11 rounded-full bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center text-sm font-bold text-black overflow-hidden shrink-0">
-                                {req.avatar_url ? (
-                                  <img src={req.avatar_url.startsWith('http') ? req.avatar_url : `${BACKEND_URL}${req.avatar_url}`} alt="" className="w-full h-full object-cover" />
+                              {/* Red unread badge */}
+                              <div className="shrink-0">
+                                {er.unread_count > 0 ? (
+                                  <span className="flex items-center justify-center min-w-[2.25rem] h-9 px-2 rounded-full bg-red-500 text-white text-sm font-bold shadow-lg shadow-red-500/30">
+                                    {er.unread_count}
+                                  </span>
                                 ) : (
-                                  (req.name || req.full_name || '?').charAt(0).toUpperCase()
+                                  <span className="flex items-center justify-center min-w-[2.25rem] h-9 px-2 rounded-full bg-white/5 border border-white/10 text-slate-400 text-sm font-semibold">
+                                    {er.pending_count}
+                                  </span>
                                 )}
                               </div>
 
-                              {/* Info */}
+                              {/* Event info */}
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold text-slate-100 truncate">
-                                  {req.full_name || req.name || 'Unknown'}
-                                  {req.phone && <span className="text-slate-500 font-normal"> · 📞 {req.phone}</span>}
-                                </p>
+                                <p className="text-sm font-semibold text-slate-100 truncate">{er.event_title}</p>
                                 <p className="text-xs text-slate-400 truncate">
-                                  wants to join <Link href={`/events/${req.event_id}`} className="text-amber-400 hover:text-amber-300">{req.event_title}</Link>
-                                  {req.created_at && <span className="text-slate-500"> · {new Date(req.created_at).toLocaleDateString()}</span>}
+                                  {er.pending_count} pending request{er.pending_count === 1 ? '' : 's'}
+                                  {er.event_date && <span> · {new Date(er.event_date).toLocaleDateString()}</span>}
+                                  {er.max_attendees != null && <span> · {er.attendee_count}/{er.max_attendees} seats</span>}
                                 </p>
-                                {req.email && <p className="text-xs text-slate-500 truncate">✉️ {req.email}</p>}
                               </div>
 
-                              {/* Actions */}
-                              <div className="flex items-center gap-2 shrink-0">
-                                <button
-                                  onClick={() => handleRsvpRequest(req, 'approve')}
-                                  disabled={processingRequest === `${req.event_id}-${req.user_id}`}
-                                  className="px-4 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-sm font-medium hover:bg-emerald-500/25 transition-all disabled:opacity-50"
-                                >
-                                  ✓ Approve
-                                </button>
-                                <button
-                                  onClick={() => handleRsvpRequest(req, 'reject')}
-                                  disabled={processingRequest === `${req.event_id}-${req.user_id}`}
-                                  className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm font-medium hover:bg-red-500/20 transition-all disabled:opacity-50"
-                                >
-                                  ✕ Reject
-                                </button>
-                              </div>
+                              <span className={`shrink-0 text-[10px] uppercase tracking-wide px-2 py-1 rounded-full border ${
+                                er.unread_count > 0
+                                  ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                                  : 'bg-white/5 text-slate-400 border-white/10'
+                              }`}>
+                                {er.unread_count > 0 ? 'New' : 'Viewed'}
+                              </span>
                             </div>
-                          </div>
+                          </Link>
                         ))
                       )}
                     </div>

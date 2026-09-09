@@ -8,6 +8,7 @@ import { apiFetch, BACKEND_URL } from './lib/auth';
 import { useAuth } from './lib/AuthContext';
 import { SkeletonCard } from './components/Skeleton';
 import CommunityJourney from './components/CommunityJourney';
+import WhyRecommendedModal, { RecommendationDetail } from './components/WhyRecommendedModal';
 
 interface Event {
   id: number;
@@ -34,13 +35,26 @@ interface Community {
 }
 
 interface Recommendation {
+  community_id?: number;
   id: number;
   name?: string;
   title?: string;
   description?: string;
   type?: string;
   category?: string;
-  score?: number;
+  member_count?: number;
+  logo?: string;
+  banner_image?: string;
+  is_verified?: boolean;
+  match_percentage?: number;
+  matched_interests?: { interest: string; strength: number; label: string }[];
+  recommendation_reasons?: string[];
+  score_breakdown?: RecommendationDetail['score_breakdown'];
+  data_notes?: Record<string, string>;
+  best_event?: { id: number; title: string; event_date: string } | null;
+  review_count?: number;
+  ranking_position?: number;
+  is_joined?: boolean;
 }
 
 // Count from zero when the stat card enters the viewport.
@@ -104,6 +118,9 @@ export default function HomePage() {
   const [rsvpStatus, setRsvpStatus] = useState<Record<number, string>>({});
   const [loadingCommunities, setLoadingCommunities] = useState(true);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+  const [recsMessage, setRecsMessage] = useState<string | null>(null);
+  const [whyModalRec, setWhyModalRec] = useState<RecommendationDetail | null>(null);
+  const [whyModalOpen, setWhyModalOpen] = useState(false);
 
   // Dynamic stats from database
   const [stats, setStats] = useState({ totalUsers: 0, totalEvents: 0, totalCommunities: 0, totalConnections: 0 });
@@ -177,7 +194,9 @@ export default function HomePage() {
         const res = await apiFetch('/api/recommendations');
         if (res.ok) {
           const data = await res.json();
-          setRecommendations(Array.isArray(data) ? data.slice(0, 6) : (data.recommendations || []).slice(0, 6));
+          const recs = Array.isArray(data) ? data : (data.recommendations || []);
+          setRecommendations(recs.slice(0, 6));
+          setRecsMessage(data.message || null);
         }
       } catch { /* ignore */ }
       setLoadingRecommendations(false);
@@ -503,7 +522,7 @@ export default function HomePage() {
                   Recommended for You
                 </h2>
                 <p className="text-slate-400 mt-2 opacity-0 animate-fade-in-up animate-fill-both animate-delay-200">
-                  Personalized picks based on your interests
+                  Personalized recommendations based on your interests, community information, events, and activity.
                 </p>
               </div>
 
@@ -517,7 +536,7 @@ export default function HomePage() {
                 <div className="text-center py-16 glass rounded-2xl">
                   <div className="text-4xl mb-4">✨</div>
                   <p className="text-slate-400">
-                    Update your interests in your profile to get personalized recommendations!
+                    {recsMessage || 'Update your interests in your profile to get personalized recommendations!'}
                   </p>
                   <Link href="/profile" className="btn-primary inline-block mt-4 text-sm px-6 py-2.5">
                     Update Profile
@@ -525,47 +544,102 @@ export default function HomePage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {recommendations.map((rec, i) => (
-                    <Link
-                      href={rec.type === 'event' ? `/events/${rec.id}` : `/communities/${rec.id}`}
-                      key={`${rec.type}-${rec.id}`}
-                      className="glass-card rounded-2xl p-5 group opacity-0 animate-fade-in-up animate-fill-both"
-                      style={{ animationDelay: `${300 + i * 100}ms` }}
-                    >
-                      <div className="flex items-start gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center flex-shrink-0 border border-white/5">
-                          {rec.type === 'event' ? (
-                            <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                            </svg>
-                          ) : (
-                            <svg className="w-6 h-6 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-[10px] uppercase font-semibold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                              {rec.type || 'community'}
-                            </span>
-                            {rec.score && (
-                              <span className="text-[10px] text-slate-500">{Math.round(rec.score * 100)}% match</span>
+                    {recommendations.map((rec, i) => {
+                      const recId = rec.community_id ?? rec.id;
+                      const strongInterests = (rec.matched_interests || [])
+                        .filter((m) => m.strength >= 0.5)
+                        .sort((a, b) => b.strength - a.strength);
+                      const whyRec: RecommendationDetail = {
+                        community_id: recId,
+                        name: rec.name || '',
+                        match_percentage: rec.match_percentage || 0,
+                        matched_interests: rec.matched_interests || [],
+                        score_breakdown: rec.score_breakdown || {
+                          interest_relevance: 0,
+                          description_relevance: 0,
+                          event_relevance: 0,
+                          category_relevance: 0,
+                          review_score: 0,
+                          engagement_score: 0,
+                          verification_score: 0,
+                        },
+                        recommendation_reasons: rec.recommendation_reasons || [],
+                        data_notes: rec.data_notes,
+                        best_event: rec.best_event,
+                        review_count: rec.review_count || 0,
+                      };
+                      return (
+                      <div
+                        key={`${rec.type}-${rec.id}`}
+                        className="glass-card rounded-2xl p-5 group opacity-0 animate-fade-in-up animate-fill-both"
+                        style={{ animationDelay: `${300 + i * 100}ms` }}
+                      >
+                        <div className="flex items-start gap-4">
+                          {/* Small circular logo on the left */}
+                          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center flex-shrink-0 border border-white/5 overflow-hidden">
+                            {rec.logo ? (
+                              <img
+                                src={`${BACKEND_URL}${rec.logo}`}
+                                alt={rec.name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <svg className="w-6 h-6 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                              </svg>
                             )}
                           </div>
-                          <h3 className="text-base font-semibold text-slate-100 truncate group-hover:text-amber-300 transition-colors">
-                            {rec.name || rec.title}
-                          </h3>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                              <span className="text-[10px] uppercase font-semibold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                {rec.type || 'community'}
+                              </span>
+                              {!!rec.match_percentage && (
+                                <span className="text-[10px] text-slate-500">{rec.match_percentage}% match</span>
+                              )}
+                            </div>
+                            <h3 className="text-base font-semibold text-slate-100 truncate group-hover:text-amber-300 transition-colors">
+                              <Link href={`/communities/${recId}`}>{rec.name || rec.title}</Link>
+                            </h3>
+
+                          {/* Matches line — straight from matched_interests */}
+                          {strongInterests.length > 0 && (
+                            <p className="text-xs text-amber-400/90 mt-1">
+                              Matches: {strongInterests.slice(0, 3).map((m) => m.interest).join(' • ')}
+                            </p>
+                          )}
+
                           {rec.description && (
-                            <p className="text-sm text-slate-400 line-clamp-2 mt-1">{rec.description}</p>
+                            <p className="text-sm text-slate-400 line-clamp-2 mt-2">{rec.description}</p>
                           )}
-                          {rec.category && (
-                            <span className="inline-block mt-2 text-xs text-slate-500">{rec.category}</span>
-                          )}
+
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-2">
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+                            </svg>
+                            <span>{rec.member_count || 0} members</span>
+                          </div>
+
+                          <div className="flex items-center gap-2 mt-4">
+                            <button
+                              type="button"
+                              onClick={() => { setWhyModalRec(whyRec); setWhyModalOpen(true); }}
+                              className="flex-1 px-3 py-2 rounded-xl text-xs font-medium border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 hover:text-amber-200 transition-all"
+                            >
+                              Why recommended?
+                            </button>
+                            <Link
+                              href={`/communities/${recId}`}
+                              className="px-3 py-2 rounded-xl text-xs font-medium text-slate-300 border border-white/10 hover:bg-white/5 hover:text-white transition-all"
+                            >
+                              View →
+                            </Link>
+                          </div>
+                          </div>
                         </div>
                       </div>
-                    </Link>
-                  ))}
+                      );
+                    })}
                 </div>
               )}
             </div>
@@ -675,6 +749,11 @@ export default function HomePage() {
         )}
       </main>
       <Chatbot />
+      <WhyRecommendedModal
+        isOpen={whyModalOpen}
+        onClose={() => setWhyModalOpen(false)}
+        recommendation={whyModalRec}
+      />
     </>
   );
 }

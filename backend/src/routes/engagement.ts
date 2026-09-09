@@ -514,6 +514,117 @@ router.delete('/rsvp', authMiddleware, async (req: AuthRequest, res, next) => {
   }
 });
 
+// GET /api/engagement/rsvp/requests/summary - Per-event pending registration request counts
+// (organizer/admin only). Returns ONLY event-level counts — never applicant personal
+// details, which stay hidden until the organizer opens the event details page.
+// "unread" is derived from the organizer's existing unread 'new_attendee'
+// notification(s) linking to that event — no schema changes, nothing stored.
+router.get('/rsvp/requests/summary', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    // Events owned by the current organizer (or, for admins, all events)
+    const eventsRes = await query(
+      `SELECT e.id, e.title, e.event_date, e.attendee_count, e.max_attendees,
+              c.name AS community_name
+       FROM events e
+       JOIN communities c ON e.community_id = c.id
+       WHERE e.deleted_at IS NULL AND c.deleted_at IS NULL
+         AND (c.owner_id = $1 OR $2::text = 'admin')
+       ORDER BY e.event_date ASC`,
+      [req.userId, req.userRole || '']
+    );
+    const events = eventsRes.rows;
+    if (events.length === 0) { res.json([]); return; }
+
+    const eventIds = events.map((e: any) => e.id);
+
+    // Pending request counts per event
+    const pendingRes = await query(
+      `SELECT event_id, COUNT(*)::int AS pending_count
+       FROM rsvps
+       WHERE event_id = ANY($1::int[]) AND status = 'pending'
+       GROUP BY event_id`,
+      [eventIds]
+    );
+    const pendingByEvent = new Map<number, number>(
+      pendingRes.rows.map((r: any) => [r.event_id, r.pending_count])
+    );
+
+    // Unread = pending requests whose 'new_attendee' notification for this
+    // organizer is still unread. Purely derived — nothing is written here.
+    const unreadRes = await query(
+      `SELECT
+         (regexp_match(n.link, '^/events/([0-9]+)'))[1]::int AS event_id,
+         COUNT(*)::int AS unread_count
+       FROM notifications n
+       WHERE n.user_id = $1 AND n.type = 'new_attendee' AND n.is_read = FALSE
+         AND n.link LIKE '/events/%'
+       GROUP BY 1`,
+      [req.userId]
+    );
+    const unreadByEvent = new Map<number, number>(
+      unreadRes.rows
+        .filter((r: any) => r.event_id != null)
+        .map((r: any) => [r.event_id, r.unread_count])
+    );
+
+    res.json(
+      events
+        .map((e: any) => {
+          const pending = pendingByEvent.get(e.id) || 0;
+          const unread = Math.min(unreadByEvent.get(e.id) || 0, pending);
+          return {
+            event_id: e.id,
+            event_title: e.title,
+            event_date: e.event_date,
+            community_name: e.community_name,
+            attendee_count: e.attendee_count,
+            max_attendees: e.max_attendees,
+            pending_count: pending,
+            unread_count: unread,
+            viewed: pending > 0 && unread === 0,
+          };
+        })
+        .filter((e: any) => e.pending_count > 0)
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/engagement/rsvp/requests/view - Mark an event's registration requests
+// as viewed by the organizer (called when they open the event details page).
+// Marks the organizer's unread 'new_attendee' notifications for that event as read.
+router.post('/rsvp/requests/view', authMiddleware, async (req: AuthRequest, res, next) => {
+  const eventId = Number(req.body?.event_id);
+  if (!eventId) {
+    return res.status(400).json({ error: 'event_id is required' });
+  }
+  try {
+    // Only the community owner (organizer) or an admin may mark these viewed
+    const eventCheck = await query(
+      `SELECT c.owner_id FROM events e JOIN communities c ON e.community_id = c.id
+       WHERE e.id = $1 AND e.deleted_at IS NULL AND c.deleted_at IS NULL`,
+      [eventId]
+    );
+    if (eventCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    if (eventCheck.rows[0].owner_id !== req.userId && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    await query(
+      `UPDATE notifications SET is_read = TRUE
+       WHERE user_id = $1 AND type = 'new_attendee' AND is_read = FALSE
+         AND link = $2`,
+      [req.userId, `/events/${eventId}`]
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // PATCH /api/engagement/rsvp/approve-reject - Approve or reject a pending RSVP (organizer/admin only)
 router.patch('/rsvp/approve-reject', authMiddleware, async (req: AuthRequest, res, next) => {
   const { event_id, user_id, action } = req.body; // action: 'approve' | 'reject'
