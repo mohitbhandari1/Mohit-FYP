@@ -45,10 +45,10 @@ export default function MyCommunitiesPage() {
   if (loading) return (
     <main className="min-h-screen bg-slate-950">
       <Navbar />
-      <section className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+      <section className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="animate-pulse space-y-4">
           <div className="h-10 w-56 bg-white/5 rounded" />
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {[1, 2, 3].map((i) => <div key={i} className="h-52 bg-white/5 rounded-2xl" />)}
           </div>
         </div>
@@ -60,15 +60,15 @@ export default function MyCommunitiesPage() {
   return (
     <main className="min-h-screen bg-slate-950">
       <Navbar />
-      <section className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+      <section className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="animate-fade-in-up">
           {/* Header */}
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
             <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">
+              <h1 className="text-4xl font-bold bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">
                 My Communities
               </h1>
-              <p className="mt-1 text-slate-400">Communities you&apos;ve joined</p>
+              <p className="mt-2 text-slate-400">Communities you&apos;ve joined</p>
             </div>
             <Link href="/communities" className="text-sm font-medium text-amber-400 hover:text-amber-300 transition-colors">
               Browse All →
@@ -81,12 +81,12 @@ export default function MyCommunitiesPage() {
 
           {/* Communities Grid */}
           {joinedCommunities.length > 0 ? (
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {joinedCommunities.map((community: any, i: number) => (
                 <div
                   key={community.id}
-                  className="group rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl overflow-hidden hover:border-amber-500/20 hover:shadow-lg hover:shadow-amber-500/5 transition-all duration-500 hover:-translate-y-1 opacity-0 animate-fade-in-up"
-                  style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'forwards' }}
+                  className="group rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl shadow-lg hover:shadow-amber-500/10 hover:border-amber-500/20 transition-all duration-500 hover:-translate-y-1 overflow-hidden opacity-0 animate-fade-in-up"
+                  style={{ animationDelay: `${i * 80}ms`, animationFillMode: 'forwards' }}
                 >
                   {/* Banner */}
                   <div className="relative aspect-video bg-gradient-to-br from-amber-900/30 to-orange-900/30 overflow-hidden">
@@ -95,7 +95,7 @@ export default function MyCommunitiesPage() {
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
-                        <svg className="w-10 h-10 text-amber-600/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-16 h-16 text-amber-600/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>
                       </div>
@@ -116,8 +116,8 @@ export default function MyCommunitiesPage() {
                   </div>
 
                   {/* Content */}
-                  <div className="p-4 pt-6">
-                    <h3 className="font-semibold text-slate-100 group-hover:text-amber-400 transition-colors line-clamp-1">
+                  <div className="p-5 pt-7">
+                    <h3 className="text-lg font-semibold text-slate-100 group-hover:text-amber-400 transition-colors line-clamp-1">
                       {community.name}
                     </h3>
                     {community.category && (
@@ -148,13 +148,13 @@ export default function MyCommunitiesPage() {
               ))}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center py-16 rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl">
+            <div className="flex flex-col items-center justify-center py-20 rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl">
               <svg className="w-16 h-16 text-slate-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
-              <h3 className="text-lg font-semibold text-slate-300">No communities joined yet</h3>
+              <h3 className="text-xl font-semibold text-slate-300">No communities joined yet</h3>
               <p className="mt-2 text-sm text-slate-500">Explore and join communities that match your interests</p>
-              <Link href="/communities" className="mt-4 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-medium shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 transition-all">
+              <Link href="/communities" className="mt-4 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black text-sm font-semibold shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 hover:scale-[1.02] transition-all">
                 Browse Communities
               </Link>
             </div>

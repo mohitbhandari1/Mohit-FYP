@@ -59,11 +59,11 @@ function CommunityCard({
 }) {
   return (
     <div
-      className="glass-card rounded-2xl overflow-hidden group opacity-0 animate-fade-in-up animate-fill-both"
-      style={{ animationDelay: `${200 + index * 60}ms` }}
+      className="group rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl shadow-lg hover:shadow-amber-500/10 hover:border-amber-500/20 transition-all duration-500 hover:-translate-y-1 overflow-hidden opacity-0 animate-fade-in-up"
+      style={{ animationDelay: `${index * 80}ms`, animationFillMode: 'forwards' }}
     >
       {/* Community image/banner */}
-      <div className="aspect-video bg-gradient-to-br from-orange-900/30 to-amber-900/20 relative overflow-hidden">
+      <div className="relative aspect-video bg-gradient-to-br from-amber-900/30 to-orange-900/30 overflow-hidden">
         {community.banner_image ? (
           <img
             src={`${BACKEND_URL}${community.banner_image}`}
@@ -71,8 +71,8 @@ function CommunityCard({
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-slate-800/50 to-slate-900/50">
-            <svg className="w-10 h-10 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="w-full h-full flex items-center justify-center">
+            <svg className="w-16 h-16 text-amber-600/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
           </div>
@@ -87,7 +87,7 @@ function CommunityCard({
 
       {/* Community info */}
       <div className="p-5">
-        <h3 className="text-lg font-semibold text-slate-100 mb-1.5 line-clamp-1 group-hover:text-amber-300 transition-colors">
+        <h3 className="text-lg font-semibold text-slate-100 mb-1.5 line-clamp-1 group-hover:text-amber-400 transition-colors">
           {community.name}
         </h3>
         {community.description && (
@@ -120,11 +120,6 @@ function CommunityCard({
             >
               {joiningId === community.id ? 'Joining...' : 'Join'}
             </button>
-          )}
-          {community.is_member && (
-            <span className="flex-1 text-center py-2.5 rounded-xl text-sm font-medium bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-              Joined ✓
-            </span>
           )}
         </div>
       </div>
@@ -223,18 +218,18 @@ export default function CommunitiesPage() {
   return (
     <>
       <Navbar />
-      <main className="min-h-screen pt-24 pb-16 px-4">
+      <main className="min-h-screen pt-8 pb-16 px-4 sm:px-6 lg:px-8">
         {/* Background effects */}
         <div className="fixed inset-0 pointer-events-none -z-10">
           <div className="glow-orb glow-orb-amber w-[500px] h-[500px] -top-40 right-0 opacity-10" />
           <div className="glow-orb glow-orb-orange w-[400px] h-[400px] bottom-0 -left-20 opacity-10" />
         </div>
 
-        <div className="max-w-7xl mx-auto">
+        <div className="max-w-7xl mx-auto animate-fade-in-up">
           {/* Header */}
-          <div className="mb-10 opacity-0 animate-fade-in-up animate-fill-both flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
             <div>
-              <h1 className="text-3xl sm:text-4xl font-bold text-slate-100">
+              <h1 className="text-4xl font-bold bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">
                 Communities
               </h1>
               <p className="text-slate-400 mt-2">
@@ -255,19 +250,19 @@ export default function CommunitiesPage() {
           </div>
 
           {/* Filters bar */}
-          <div className="glass rounded-2xl p-4 sm:p-5 mb-8 opacity-0 animate-fade-in-up animate-fill-both animate-delay-100">
-            <div className="flex flex-col sm:flex-row gap-3">
+          <div className="mb-8">
+            <div className="flex flex-col gap-4 sm:flex-row">
               {/* Search input */}
               <div className="relative flex-1">
-                <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
                 <input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search communities..."
-                  className="input-glass w-full pl-12 pr-4 py-3 rounded-xl"
+                  className="w-full rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-xl pl-10 pr-10 py-2.5 text-slate-100 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 transition-all"
                 />
               </div>
 
@@ -276,7 +271,7 @@ export default function CommunitiesPage() {
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="input-glass appearance-none w-full sm:w-44 py-3 px-4 pr-10 rounded-xl text-sm cursor-pointer"
+                  className="appearance-none w-full sm:w-44 rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-xl py-2.5 pl-4 pr-10 text-sm text-slate-100 cursor-pointer focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 transition-all"
                 >
                   {categories.map((cat) => (
                     <option key={cat} value={cat} className="bg-slate-900 text-slate-200">
@@ -294,7 +289,7 @@ export default function CommunitiesPage() {
                 <select
                   value={sort}
                   onChange={(e) => setSort(e.target.value)}
-                  className="input-glass appearance-none w-full sm:w-40 py-3 px-4 pr-10 rounded-xl text-sm cursor-pointer"
+                  className="appearance-none w-full sm:w-40 rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-xl py-2.5 pl-4 pr-10 text-sm text-slate-100 cursor-pointer focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 transition-all"
                 >
                   {SORT_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value} className="bg-slate-900 text-slate-200">
@@ -311,7 +306,7 @@ export default function CommunitiesPage() {
 
           {/* Communities grid */}
           {loading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {Array.from({ length: 6 }).map((_, i) => (
                 <SkeletonCard key={i} hasImage lines={3} />
               ))}
@@ -336,7 +331,7 @@ export default function CommunitiesPage() {
                   <p className="text-slate-500 text-sm mt-1">Here are related communities you might like:</p>
                 </div>
               )}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {communities.map((community, i) => (
                   <CommunityCard
                     key={community.id}
@@ -361,7 +356,7 @@ export default function CommunitiesPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                     {related.map((community, i) => (
                       <CommunityCard
                         key={community.id}
