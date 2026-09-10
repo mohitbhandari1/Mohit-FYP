@@ -371,23 +371,27 @@ function eventRelevanceScore(
 
   for (const event of events) {
     const topics = parseListField(event.topics);
+    const personalizedInterests = parseListField(event.personalized_interests);
     const titleText = (event.title || '').toLowerCase();
     const descText = (event.description || '').toLowerCase();
     const topicsText = topics.text.toLowerCase();
+    const interestTagsText = personalizedInterests.text.toLowerCase();
     const typeText = (event.event_type || '').toLowerCase();
 
-    // Title hits weigh most, then topics, then description/type.
+    // Title hits weigh most, then personalized interest tags, then topics, then description/type.
     for (const { interest, concepts } of interestKeys) {
       let strength = 0;
       const title = matchStrength(titleText, interest, concepts);
+      const tags = matchStrength(interestTagsText, interest, concepts);
       const top = matchStrength(topicsText, interest, concepts);
       const desc = matchStrength(descText, interest, concepts);
       const type = matchStrength(typeText, interest, concepts);
 
       strength = Math.max(
         strength,
-        title * 0.6 + top * 0.25 + desc * 0.3 + type * 0.1,
+        title * 0.5 + tags * 0.3 + top * 0.15 + desc * 0.25 + type * 0.05,
         title, // a pure title hit is already a strong signal on its own
+        tags,  // personalized interest tags are highly targeted
         top,
         desc,
         type,

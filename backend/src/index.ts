@@ -37,6 +37,20 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 
+// Request logger — one concise line per request, skip noisy GET polling endpoints
+app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const skipPaths = ['/api/health', '/api/stats', '/api/chat'];
+  if (req.method === 'GET' && skipPaths.some((p) => req.path.startsWith(p))) return next();
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    const line = `${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`;
+    if (res.statusCode >= 500) console.error(`❌ ${line}`); // real errors — keep visible
+    else console.log(`✓ ${line}`);
+  });
+  next();
+});
+
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
@@ -102,12 +116,24 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-// Global error handler
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error('Unhandled error:', err.message || err);
+// Global error handler — logs full details, returns clean message to client
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const isServerError = !err.status || err.status >= 500;
+  const logParts = [
+    `[${req.method} ${req.originalUrl}]`,
+    `${err.status || 500} ${err.name || 'Error'}: ${err.message || String(err)}`,
+  ];
+  // Multer file-type violations are client errors (message starts with "Only") — log lightly
   if (err.message && err.message.includes('Only')) {
-    // Multer file type errors
+    console.warn(`⚠️  ${logParts.join(' ')}`);
     return res.status(400).json({ error: err.message });
+  }
+  if (isServerError) {
+    console.error(`💥 ${logParts.join(' ')}`);
+    if (err.stack) console.error(err.stack);
+    console.error('Request body keys:', Object.keys(req.body || {}));
+  } else {
+    console.warn(`⚠️  ${logParts.join(' ')}`);
   }
   res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
 });

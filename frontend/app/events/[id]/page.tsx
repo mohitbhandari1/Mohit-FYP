@@ -449,6 +449,23 @@ export default function EventDetailPage() {
               <div className="rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-6">
                 <h2 className="text-xl font-semibold text-slate-100 mb-4">About this Event</h2>
                 <p className="text-slate-300 whitespace-pre-wrap leading-relaxed">{event.description || 'No description provided.'}</p>
+                {/* Personalized Interest Tags */}
+                {event.personalized_interests && (
+                  <div className="mt-4 pt-4 border-t border-white/5">
+                    <h3 className="text-md font-semibold text-slate-200 mb-2">Interest Tags</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(typeof event.personalized_interests === 'string' ? JSON.parse(event.personalized_interests) : event.personalized_interests).map((tag: string) => (
+                        <span key={tag} className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-xs font-medium text-amber-400">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-2">
+                      These tags help match this event with users who have similar interests.
+                    </p>
+                  </div>
+                )}
+
                 {event.agenda && (
                   <div className="mt-6 pt-6 border-t border-white/5">
                     <h3 className="text-md font-semibold text-slate-200 mb-2">Agenda</h3>

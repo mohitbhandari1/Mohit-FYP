@@ -335,13 +335,13 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // POST /api/events - Create event (supports file uploads)
-router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async (req: AuthRequest, res, next) => {
-  const {
+router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async (req: AuthRequest, res, next) => {    const {
     community_id, title, description, event_date, start_time, end_date, end_time,
     duration, location, event_type, max_attendees, allow_guests,
     guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
     agenda, requirements, instructions, questions,
-    age_limit, requires_documents, document_instructions, require_approval
+    age_limit, requires_documents, document_instructions, require_approval,
+    personalized_interests
   } = req.body;
 
   if (!community_id || !title || !description || !event_date) {
@@ -369,8 +369,8 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
         duration, location, event_type, banner_image, max_attendees, allow_guests,
         guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
         agenda, requirements, instructions,
-        age_limit, requires_documents, document_instructions, require_approval, attendee_count)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+        age_limit, requires_documents, document_instructions, require_approval, personalized_interests, attendee_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
        RETURNING *`,
       [community_id, title, description, event_date, start_time || null, end_date || null, end_time || null,
        duration || null, location || null, event_type || 'physical', bannerImage,
@@ -378,7 +378,8 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
        rsvp_deadline || null, payment_type || 'free', topics || null, hosts || null, speakers || null,
        agenda || null, requirements || null, instructions || null,
        age_limit || null, requires_documents === 'true' || requires_documents === true,
-       document_instructions || null, require_approval === 'true' || require_approval === true, 0]
+       document_instructions || null, require_approval === 'true' || require_approval === true,
+       personalized_interests || null, 0]
     );
 
     // Save custom registration questions (seat limit lives in max_attendees)
@@ -432,13 +433,13 @@ router.post('/', authMiddleware, uploadEventImage.single('banner_image'), async 
 
 // PUT /api/events/:id - Update event (supports file uploads)
 router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), async (req: AuthRequest, res, next) => {
-  const eventId = Number(req.params.id);
-  const {
+  const eventId = Number(req.params.id);    const {
     title, description, event_date, start_time, end_date, end_time,
     duration, location, event_type, max_attendees, allow_guests,
     guest_limit, rsvp_deadline, payment_type, topics, hosts, speakers,
     agenda, requirements, instructions, questions,
-    age_limit, requires_documents, document_instructions, require_approval
+    age_limit, requires_documents, document_instructions, require_approval,
+    personalized_interests
   } = req.body;
 
   try {
@@ -482,7 +483,8 @@ router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), asyn
         age_limit = CASE WHEN $22 = '' THEN NULL ELSE COALESCE($22, age_limit) END,
         requires_documents = CASE WHEN $23 = '' THEN NULL ELSE COALESCE($23::boolean, requires_documents) END,
         document_instructions = CASE WHEN $24 = '' THEN NULL ELSE COALESCE($24, document_instructions) END,
-        require_approval = CASE WHEN $26 = '' THEN NULL ELSE COALESCE($26::boolean, require_approval) END
+        require_approval = CASE WHEN $26 = '' THEN NULL ELSE COALESCE($26::boolean, require_approval) END,
+        personalized_interests = COALESCE($27, personalized_interests)
        WHERE id = $25 RETURNING *`,
       [title || null, description || null, event_date || null, start_time || null,
        end_date || null, end_time || null, duration || null, location || null,
@@ -490,7 +492,7 @@ router.put('/:id', authMiddleware, uploadEventImage.single('banner_image'), asyn
        guest_limit || null, rsvp_deadline || null, payment_type || null, topics || null,
        hosts || null, speakers || null, agenda || null, requirements || null, instructions || null,
        age_limit || null, requires_documents ?? null, document_instructions || null,
-       eventId, require_approval ?? null]
+       personalized_interests || null, eventId, require_approval ?? null]
     );
 
     // Save custom registration questions — only when the organizer sent them

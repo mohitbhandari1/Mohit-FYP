@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS events (
   requires_documents BOOLEAN DEFAULT FALSE,
   document_instructions TEXT,
   require_approval BOOLEAN DEFAULT FALSE,
+  personalized_interests TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

@@ -4,6 +4,8 @@ import { Request, Response, NextFunction } from 'express';
 export interface AuthRequest extends Request {
   userId?: number;
   userRole?: string;
+  /** Populated by authMiddleware so handlers can use req.user?.id / req.user?.role */
+  user?: { id: number; role: string };
 }
 
 export const authMiddleware = (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -20,6 +22,7 @@ export const authMiddleware = (req: AuthRequest, res: Response, next: NextFuncti
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret-key') as any;
     req.userId = decoded.id;
     req.userRole = decoded.role;
+    req.user = { id: decoded.id, role: decoded.role };
     next();
   } catch (error: any) {
     if (error.name === 'TokenExpiredError') {
@@ -47,6 +50,7 @@ export const optionalAuth = (req: AuthRequest, _res: Response, next: NextFunctio
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret-key') as any;
       req.userId = decoded.id;
       req.userRole = decoded.role;
+      req.user = { id: decoded.id, role: decoded.role };
     } catch {
       // Token invalid - continue without auth
     }

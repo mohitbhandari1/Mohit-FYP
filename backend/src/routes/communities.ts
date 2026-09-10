@@ -253,7 +253,7 @@ router.put('/:id', authMiddleware, uploadCommunityImages.fields([
   const {
     name, description, category, website, location,
     facebook, instagram, linkedin, tiktok,
-    is_private, member_approval, membership_open
+    is_private, member_approval, membership_open, membership_form_url
   } = req.body;
 
   try {
@@ -291,12 +291,13 @@ router.put('/:id', authMiddleware, uploadCommunityImages.fields([
         linkedin = COALESCE($10, linkedin), tiktok = COALESCE($11, tiktok),
         is_private = COALESCE($12, is_private), member_approval = COALESCE($13, member_approval),
         membership_open = COALESCE($14, membership_open),
-        membership_form_url = COALESCE($15, membership_form_url)
+        membership_form_url = $15
        WHERE id = $16 RETURNING *`,
       [name || null, description || null, category || null, website || null,
        location || null, banner_image || null, logo || null,
        facebook || null, instagram || null, linkedin || null, tiktok || null,
-       is_private ?? null, member_approval ?? null, membership_open ?? null, membership_form_url || null, communityId]
+       is_private ?? null, member_approval ?? null, membership_open ?? null,
+       typeof membership_form_url === 'string' ? membership_form_url.trim() || null : null, communityId]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -703,7 +704,8 @@ router.post('/:id/membership-application', authMiddleware, async (req: AuthReque
       if (commRes.rows.length && userRes.rows.length) {
         const communityName = commRes.rows[0].name;
         const userName = userRes.rows[0].name;
-        sendEmail(email, ...Object.values(membershipSubmittedEmail(userName, communityName)));
+        const emailContent = membershipSubmittedEmail(userName, communityName);
+        sendEmail(email, emailContent.subject, emailContent.html);
       }
     } catch (emailErr) { console.error('[Email] Failed to send membership submission email:', emailErr); }
 
@@ -761,7 +763,8 @@ router.patch('/:id/membership-applications/:appId', authMiddleware, async (req: 
         const userEmail = userRes.rows[0].email;
         const communityName = commRes.rows[0].name;
         if (status === 'approved') {
-          sendEmail(userEmail, ...Object.values(membershipApprovedEmail(userName, communityName)));
+          const emailContent = membershipApprovedEmail(userName, communityName);
+          sendEmail(userEmail, emailContent.subject, emailContent.html);
           createNotification(
             result.rows[0].user_id, 'membership_approved',
             `Membership Approved: ${communityName}`,
@@ -769,7 +772,8 @@ router.patch('/:id/membership-applications/:appId', authMiddleware, async (req: 
             `/communities/${req.params.id}`
           ).catch(() => {});
         } else if (status === 'rejected') {
-          sendEmail(userEmail, ...Object.values(membershipRejectedEmail(userName, communityName, admin_notes)));
+          const emailContent = membershipRejectedEmail(userName, communityName, admin_notes);
+          sendEmail(userEmail, emailContent.subject, emailContent.html);
           createNotification(
             result.rows[0].user_id, 'membership_rejected',
             `Membership Update: ${communityName}`,

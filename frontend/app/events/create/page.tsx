@@ -50,6 +50,8 @@ export default function CreateEventPage() {
     speakers: '', agenda: '', requirements: '', instructions: '',
     age_limit: '',
     require_approval: false,
+    personalized_interests: [] as string[],
+    interestInput: '',
     community_id: '',
     questions: [
       {
@@ -163,6 +165,7 @@ export default function CreateEventPage() {
       payload.append('payment_type', formData.payment_type);
       payload.append('community_id', formData.community_id);
       if (formData.topics.length > 0) payload.append('topics', JSON.stringify(formData.topics));
+      if (formData.personalized_interests.length > 0) payload.append('personalized_interests', JSON.stringify(formData.personalized_interests));
       if (formData.speakers) payload.append('speakers', formData.speakers);
       if (formData.agenda) payload.append('agenda', formData.agenda);
       if (formData.requirements) payload.append('requirements', formData.requirements);
@@ -548,6 +551,55 @@ export default function CreateEventPage() {
                   </svg>
                   + Add Question
                 </button>
+              </div>
+
+              {/* Personalized Interest Tags — used for smart recommendations */}
+              <div>
+                <label className={labelClass}>Personalized Interest Tags</label>
+                <p className="text-xs text-slate-500 mb-2">
+                  Add tags that describe the specific interests this event caters to (e.g., "machine-learning", "chess-openings", "vegan-recipes"). These help the recommendation engine match this event with users who have similar interests.
+                </p>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {formData.personalized_interests.map((tag) => (
+                    <span key={tag}
+                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                    >
+                      {tag}
+                      <button type="button" onClick={() => setFormData((prev) => ({ ...prev, personalized_interests: prev.personalized_interests.filter((t) => t !== tag) }))} className="ml-1 text-amber-400/60 hover:text-amber-400">×</button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {['machine-learning', 'deep-learning', 'chess', 'poker', 'vegan', 'fitness', 'yoga', 'meditation', 'creative-writing', 'photography', 'digital-art', 'podcasting', 'blockchain', 'cybersecurity', 'data-science', 'UX-design', 'product-management', 'startups', 'investing', 'personal-branding'].filter((t) => !formData.personalized_interests.includes(t)).map((tag) => (
+                    <button key={tag} type="button" onClick={() => {
+                      if (!formData.personalized_interests.includes(tag)) {
+                        setFormData((prev) => ({ ...prev, personalized_interests: [...prev.personalized_interests, tag] }));
+                      }
+                    }}
+                      className="px-2.5 py-1 text-xs rounded-full border border-white/10 text-slate-400 hover:text-amber-400 hover:border-amber-500/20 transition-all"
+                    >
+                      + {tag}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    type="text"
+                    value={formData.interestInput}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, interestInput: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ',') {
+                        e.preventDefault();
+                        const tag = formData.interestInput.trim().toLowerCase();
+                        if (tag && !formData.personalized_interests.includes(tag) && formData.personalized_interests.length < 20) {
+                          setFormData((prev) => ({ ...prev, personalized_interests: [...prev.personalized_interests, tag], interestInput: '' }));
+                        }
+                      }
+                    }}
+                    placeholder="Type a custom tag and press Enter..."
+                    className={inputClass}
+                  />
+                </div>
               </div>
 
               {/* Topics */}

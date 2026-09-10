@@ -16,6 +16,7 @@ export default function ProfilePage() {
   const [bio, setBio] = useState('');
   const [interests, setInterests] = useState<string[]>([]);
   const [interestInput, setInterestInput] = useState('');
+  const [suggestedInterests, setSuggestedInterests] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -110,6 +111,33 @@ export default function ProfilePage() {
   const removeInterest = (tag: string) => {
     setInterests(interests.filter((t) => t !== tag));
   };
+
+  // Suggested interests for discovery — shown when user has few interests
+  useEffect(() => {
+    if (interests.length === 0) {
+      setSuggestedInterests([
+        'Technology', 'Music', 'Sports', 'Art', 'Business',
+        'Gaming', 'Photography', 'Cooking', 'Literature', 'Dance',
+        'Travel', 'Fitness', 'Yoga', 'Writing', 'Reading',
+        'Movies', 'Fashion', 'Science', 'Nature', 'Volunteering',
+        'Podcasts', 'Chess', 'Machine Learning', 'Data Science',
+        'UX Design', 'Startups', 'Investing', 'Wellness'
+      ]);
+    } else if (interests.length < 5) {
+      // Show a few suggestions to complete the profile
+      const allSuggestions = [
+        'Technology', 'Music', 'Sports', 'Art', 'Business',
+        'Gaming', 'Photography', 'Cooking', 'Literature', 'Dance',
+        'Travel', 'Fitness', 'Yoga', 'Writing', 'Reading',
+        'Movies', 'Fashion', 'Science', 'Nature', 'Volunteering',
+        'Podcasts', 'Chess', 'Machine Learning', 'Data Science',
+        'UX Design', 'Startups', 'Investing', 'Wellness'
+      ];
+      setSuggestedInterests(allSuggestions.filter((s) => !interests.includes(s)).slice(0, 8));
+    } else {
+      setSuggestedInterests([]);
+    }
+  }, [interests]);
 
   const handleInterestKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ',') {
@@ -428,8 +456,37 @@ export default function ProfilePage() {
                       className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-sm text-slate-200 placeholder:text-slate-500"
                     />
                   </div>
-                  <p className="text-xs text-slate-500 mt-1.5">Press Enter or comma to add</p>
+                  <p className="text-xs text-slate-500 mt-1.5">Press Enter or comma to add. Choose from suggestions or type your own.</p>
                 </div>
+
+                {/* Suggested interests for discovery */}
+                {suggestedInterests.length > 0 && (
+                  <div className="mt-3">
+                    <p className="text-xs text-slate-500 mb-2 font-medium">Suggested interests:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {suggestedInterests.map((tag) => (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => {
+                            if (!interests.includes(tag) && interests.length < 15) {
+                              setInterests([...interests, tag]);
+                              setSuggestedInterests((prev) => prev.filter((t) => t !== tag));
+                            }
+                          }}
+                          disabled={interests.includes(tag)}
+                          className={`px-2.5 py-1 text-xs rounded-full border transition-all ${
+                            interests.includes(tag)
+                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                              : 'border-white/10 text-slate-400 hover:text-amber-400 hover:border-amber-500/20'
+                          }`}
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Save / Cancel buttons */}
                 <div className="flex gap-3 pt-2">

@@ -136,6 +136,7 @@ export default function OrganizerDashboard() {
     name: '', description: '', category: '', website: '', location: '',
     facebook: '', instagram: '', linkedin: '', tiktok: '',
     is_private: false, member_approval: false, membership_open: false, membership_form_url: '',
+    customCategory: '',
   });
   const [saving, setSaving] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState('');
@@ -171,7 +172,7 @@ export default function OrganizerDashboard() {
 
   // Create community
   const [showNewCommunity, setShowNewCommunity] = useState(false);
-  const [newCommunityForm, setNewCommunityForm] = useState({ name: '', description: '', category: '', website: '', location: '' });
+  const [newCommunityForm, setNewCommunityForm] = useState({ name: '', description: '', category: '', website: '', location: '', customCategory: '' });
   const [creatingCommunity, setCreatingCommunity] = useState(false);
 
   useEffect(() => {
@@ -224,6 +225,7 @@ export default function OrganizerDashboard() {
       member_approval: selectedCommunity.member_approval || false,
       membership_open: selectedCommunity.membership_open || false,
       membership_form_url: selectedCommunity.membership_form_url || '',
+      customCategory: '',
     });
 
     const fetchMembersAndEvents = async () => {
@@ -276,10 +278,14 @@ export default function OrganizerDashboard() {
     setSettingsSuccess('');
     setError('');
     try {
+      const payload = { ...formData };
+      if (payload.category === '__other__') {
+        payload.category = payload.customCategory || '';
+      }
       const res = await apiFetch(`/api/communities/${selectedCommunity.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         const updated = await res.json();
@@ -300,15 +306,19 @@ export default function OrganizerDashboard() {
     e.preventDefault();
     setCreatingCommunity(true);
     try {
+      const payload = { ...newCommunityForm };
+      if (payload.category === '__other__') {
+        payload.category = payload.customCategory || '';
+      }
       const res = await apiFetch('/api/communities', {
         method: 'POST',
-        body: JSON.stringify(newCommunityForm),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         const data = await res.json();
         setCommunities((prev) => [...prev, data]);
         setSelectedCommunity(data);
-        setNewCommunityForm({ name: '', description: '', category: '', website: '', location: '' });
+        setNewCommunityForm({ name: '', description: '', category: '', website: '', location: '', customCategory: '' });
         setShowNewCommunity(false);
         addToast('success', 'Community created successfully!');
       } else {
@@ -378,15 +388,25 @@ export default function OrganizerDashboard() {
                     <input type="text" required value={newCommunityForm.name}
                       onChange={(e) => setNewCommunityForm({ ...newCommunityForm, name: e.target.value })}
                       placeholder="Community name" className={inputClass} />
-                  </div>
-                  <div>
+                  </div>                    <div>
                     <label className={labelClass}>Category *</label>
                     <select required value={newCommunityForm.category}
                       onChange={(e) => setNewCommunityForm({ ...newCommunityForm, category: e.target.value })}
                       className={inputClass}>
                       <option value="" className="bg-slate-900">Select category</option>
                       {CATEGORIES.map((cat) => <option key={cat} value={cat} className="bg-slate-900">{cat}</option>)}
+                      <option value="__other__" className="bg-slate-900">Other (custom)</option>
                     </select>
+                    {newCommunityForm.category === '__other__' && (
+                      <input
+                        type="text"
+                        value={newCommunityForm.customCategory || ''}
+                        onChange={(e) => setNewCommunityForm({ ...newCommunityForm, customCategory: e.target.value })}
+                        placeholder="Enter your custom category..."
+                        required
+                        className={inputClass}
+                      />
+                    )}
                   </div>
                 </div>
                 <div>
@@ -786,7 +806,19 @@ export default function OrganizerDashboard() {
                             <label className={labelClass}>Category *</label>
                             <select name="category" value={formData.category} onChange={handleSettingsChange} required className={inputClass}>
                               {CATEGORIES.map((cat) => <option key={cat} value={cat} className="bg-slate-900">{cat}</option>)}
+                              <option value="__other__" className="bg-slate-900">Other (custom)</option>
                             </select>
+                            {formData.category === '__other__' && (
+                              <input
+                                type="text"
+                                name="category"
+                                value={formData.customCategory || ''}
+                                onChange={(e) => setFormData((prev) => ({ ...prev, customCategory: e.target.value }))}
+                                placeholder="Enter your custom category..."
+                                required
+                                className={inputClass}
+                              />
+                            )}
                           </div>
                         </div>
 

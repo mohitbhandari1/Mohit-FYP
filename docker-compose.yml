@@ -35,6 +35,7 @@ services:
       JWT_SECRET: smart-connects-docker-secret-key-2026
       PORT: 4000
       RESEND_API_KEY: ${RESEND_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       FROM_EMAIL: ${FROM_EMAIL:-onboarding@resend.dev}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
     depends_on:

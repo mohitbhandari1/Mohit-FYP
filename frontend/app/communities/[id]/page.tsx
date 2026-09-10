@@ -409,7 +409,7 @@ export default function CommunityDetailPage() {
                         <button
                           onClick={() => {
                             setShowMenu(false);
-                            window.location.href = `/communities/${id}/apply`;
+                            window.open(`/communities/${id}/apply`, '_blank', 'noopener,noreferrer');
                           }}
                           className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-white/5 transition-colors border-t border-white/5"
                         >
@@ -455,11 +455,13 @@ export default function CommunityDetailPage() {
                   You are a Member
                 </span>
               )}
-              {/* Be a Member — only if organizer enabled membership */}
-              {community.membership_open ? (
+              {/* Be a Member — shown when organizer opened membership OR set a custom form URL */}
+              {(community.membership_open || community.membership_form_url) ? (
                 membershipStatus ? (
                   <Link
                     href={`/communities/${id}/apply`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className={`flex-1 sm:flex-none inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold transition-all border ${
                       membershipStatus.status === 'approved'
                         ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
@@ -487,6 +489,8 @@ export default function CommunityDetailPage() {
                 ) : (
                   <Link
                     href={`/communities/${id}/apply`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-sm font-semibold transition-all btn-ghost text-center"
                   >
                     Be a Member

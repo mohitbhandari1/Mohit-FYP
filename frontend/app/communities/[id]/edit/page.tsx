@@ -24,6 +24,7 @@ export default function EditCommunityPage() {
     banner_image: '', logo: '',
     facebook: '', instagram: '', linkedin: '', tiktok: '',
     is_private: false, member_approval: false,
+    membership_open: false, membership_form_url: '',
   });
   const [members, setMembers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +61,8 @@ export default function EditCommunityPage() {
           tiktok: data.tiktok || '',
           is_private: data.is_private || false,
           member_approval: data.member_approval || false,
+          membership_open: data.membership_open || false,
+          membership_form_url: data.membership_form_url || '',
         });
 
         // Load members
@@ -98,6 +101,9 @@ export default function EditCommunityPage() {
       if (formData.tiktok) payload.append('tiktok', formData.tiktok);
       payload.append('is_private', String(formData.is_private));
       payload.append('member_approval', String(formData.member_approval));
+      payload.append('membership_open', String(formData.membership_open));
+      if (formData.membership_form_url) payload.append('membership_form_url', formData.membership_form_url);
+      else payload.append('membership_form_url', '');
       if (bannerFile) payload.append('banner_image', bannerFile);
       if (logoFile) payload.append('logo', logoFile);
 
@@ -111,7 +117,7 @@ export default function EditCommunityPage() {
         setTimeout(() => router.push(`/communities/${id}`), 1500);
       } else {
         const errData = await res.json().catch(() => null);
-        setError(errData?.message || 'Failed to update community');
+        setError(errData?.error || errData?.message || 'Failed to update community');
       }
     } catch (err) { setError('Something went wrong. Please try again.'); }
     finally { setSubmitting(false); }
@@ -281,6 +287,26 @@ export default function EditCommunityPage() {
                       className="w-4 h-4 rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/20" />
                     <span className="text-sm text-slate-300">Require approval for new members</span>
                   </label>
+                </div>
+              </div>
+
+              {/* Membership Application */}
+              <div className="pt-4 border-t border-white/5">
+                <h3 className="text-lg font-semibold text-slate-200 mb-4">Membership</h3>
+                <div className="space-y-4">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" name="membership_open" checked={formData.membership_open} onChange={handleChange}
+                      className="w-4 h-4 rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500/20" />
+                    <span className="text-sm text-slate-300">Open membership applications (in-app form)</span>
+                  </label>
+                  <div>
+                    <label className={labelClass}>Membership Form URL (optional)</label>
+                    <input type="url" name="membership_form_url" value={formData.membership_form_url} onChange={handleChange}
+                      placeholder="https://forms.google.com/... or Google Form link" className={inputClass} />
+                    <p className="text-xs text-slate-500 mt-1.5">
+                      Link to your own membership form (Google Forms, Typeform, etc.). When set, the "Be a Member" button takes users there instead of the in-app form. Leave empty to remove.
+                    </p>
+                  </div>
                 </div>
               </div>
 

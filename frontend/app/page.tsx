@@ -381,6 +381,17 @@ export default function HomePage() {
                         </div>
                       )}
 
+                      {/* Personalized Interest Tags */}
+                      {(event as any).personalized_interests && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {JSON.parse((event as any).personalized_interests).slice(0, 3).map((tag: string) => (
+                            <span key={tag} className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[10px] font-medium text-amber-400">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
                       {/* Attendees & seats remaining */}
                       <div className="flex flex-wrap items-center gap-2 mt-1">
                         {(event.attendee_count ?? 0) > 0 && (

@@ -50,7 +50,7 @@ export default function MembershipApplyPage() {
           setCommunity(commData);
           // If organizer set a custom membership form URL, redirect there
           if (commData.membership_form_url) {
-            window.location.href = commData.membership_form_url;
+            window.open(commData.membership_form_url, '_blank', 'noopener,noreferrer');
             return;
           }
         }
